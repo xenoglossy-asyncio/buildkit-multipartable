@@ -174,9 +174,10 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 	}
 	builds, _ := s.db.Builds.List(5000)
 	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour)
 	counts := make([]int, days)
 	for _, b := range builds {
-		age := now.Sub(b.CreatedAt)
+		age := today.Sub(b.CreatedAt.Truncate(24 * time.Hour))
 		day := int(age.Hours() / 24)
 		if day >= 0 && day < days {
 			counts[days-1-day]++
@@ -191,18 +192,13 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 func (s *Server) averageStats(w http.ResponseWriter, r *http.Request) {
 	builds, _ := s.db.Builds.List(2000)
 	var totalTime time.Duration
-	var timed, cacheHits int
+	var timed int
 	for _, b := range builds {
 		if b.Status == domain.StatusSucceeded && b.CompletedAt != nil {
-			d := b.UpdatedAt.Sub(b.CreatedAt)
+			d := b.CompletedAt.Sub(b.CreatedAt)
 			if d > 0 && d < 2*time.Hour {
 				totalTime += d
 				timed++
-			}
-		}
-		if b.CompletedAt != nil {
-			if strings.Count(b.Logs, "CACHED") > strings.Count(b.Logs, "DONE")/2 {
-				cacheHits++
 			}
 		}
 	}
@@ -210,12 +206,30 @@ func (s *Server) averageStats(w http.ResponseWriter, r *http.Request) {
 	if timed > 0 {
 		avgSec = totalTime.Seconds() / float64(timed)
 	}
-	cacheRate := 0.0
-	if len(builds) > 0 {
-		cacheRate = float64(cacheHits) / float64(len(builds)) * 100
+
+	// Count cache hits vs misses from log output
+	// buildctl lines: "#7 CACHED" = cache hit, "#7 DONE" without CACHED = cache miss
+	var cacheHits, cacheMisses int
+	for _, b := range builds {
+		if b.Status == domain.StatusSucceeded && b.Logs != "" {
+			lines := strings.Split(b.Logs, "\n")
+			for _, line := range lines {
+				if strings.Contains(line, "CACHED") {
+					cacheHits++
+				} else if strings.Contains(line, "DONE") && !strings.Contains(line, "CACHED") {
+					cacheMisses++
+				}
+			}
+		}
 	}
+	totalOps := cacheHits + cacheMisses
+	cacheRate := 0.0
+	if totalOps > 0 {
+		cacheRate = float64(cacheHits) / float64(totalOps) * 100
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"avg_build_sec":   avgSec,
-		"cache_hit_rate":  cacheRate,
+		"avg_build_sec":  avgSec,
+		"cache_hit_rate": cacheRate,
 	})
 }

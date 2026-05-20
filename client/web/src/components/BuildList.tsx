@@ -6,8 +6,6 @@ interface Props {
   onSelect: (id: string) => void;
 }
 
-const PAGE_SIZE = 15;
-
 const statusClass: Record<string, string> = {
   pending: "status-pending", building: "status-building",
   succeeded: "status-succeeded", failed: "status-failed",
@@ -34,25 +32,34 @@ function cacheHint(b: Build): string {
 export default function BuildList({ selected, onSelect }: Props) {
   const [page, setPage] = useState<BuildPage | null>(null);
   const [pageNum, setPageNum] = useState(0);
+  const [perPage, setPerPage] = useState(15);
 
   async function refresh() {
     try {
-      const res = await fetch(`/api/v1/builds?limit=${PAGE_SIZE}&offset=${pageNum * PAGE_SIZE}`);
+      const res = await fetch(`/api/v1/builds?limit=${perPage}&offset=${pageNum * perPage}`);
       if (res.ok) setPage(await res.json());
     } catch {}
   }
 
-  useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t); }, [pageNum]);
-  // eslint-disable-next-line
-  useEffect(() => { refresh(); }, [pageNum]);
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
+  }, [pageNum, perPage]);
 
-  const totalPages = page ? Math.ceil(page.total / PAGE_SIZE) : 0;
+  const totalPages = page ? Math.ceil(page.total / perPage) : 0;
 
   return (
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={{ margin: 0 }}>Builds {page && <span style={{ color: "var(--muted)", fontWeight: 400 }}>({page.total})</span>}</h2>
-        <button className="small ghost" onClick={refresh}>Refresh</button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={perPage} onChange={(e) => { setPerPage(+e.target.value); setPageNum(0); }}
+            style={{ fontSize: 11, padding: "2px 6px" }}>
+            {[10, 20, 50, 100].map(n => <option key={n} value={n}>{n}/page</option>)}
+          </select>
+          <button className="small ghost" onClick={refresh}>Refresh</button>
+        </div>
       </div>
 
       {(!page || page.builds.length === 0) && <p style={{ color: "var(--muted)" }}>No builds yet</p>}

@@ -1,170 +1,146 @@
 import { useState, useEffect } from "react";
 
 const BASE = "/api/v1/admin";
-function adminHeaders(): Record<string, string> {
+const H = (): Record<string, string> => {
   const key = localStorage.getItem("dtbuild_api_key") || "";
   return { "x-admin-key": key };
-}
+};
 
-async function get(path: string) {
-  const res = await fetch(BASE + path, { headers: adminHeaders() });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-async function put(path: string, body: any) {
-  const res = await fetch(BASE + path, {
-    method: "PUT", headers: { ...adminHeaders(), "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-async function post(path: string, body?: any) {
-  const res = await fetch(BASE + path, {
-    method: "POST", headers: { ...adminHeaders(), "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-async function del(path: string) {
-  const res = await fetch(BASE + path, { method: "DELETE", headers: adminHeaders() });
-  if (!res.ok) throw new Error(await res.text());
-}
+type Page = "overview" | "quotas" | "keys";
 
 export default function AdminPanel() {
+  const [page, setPage] = useState<Page>("overview");
   const [health, setHealth] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
+  const [keys, setKeys] = useState<any[]>([]);
   const [quotaUser, setQuotaUser] = useState("");
   const [quota, setQuota] = useState<any>(null);
   const [qForm, setQForm] = useState({ max_concurrent: 5, max_daily: 100, max_storage_bytes: 0, max_timeout_sec: 1800 });
   const [newKeyUser, setNewKeyUser] = useState("");
   const [newKeyVal, setNewKeyVal] = useState("");
-  const [keys, setKeys] = useState<any[]>([]);
   const [msg, setMsg] = useState("");
-  async function loadAll() {
-    try {
-      const [h, s, k] = await Promise.all([get("/health"), get("/stats"), get("/keys")]);
-      setHealth(h); setStats(s); setKeys(k);
-    } catch (e: any) { setMsg(e.message); }
+
+  async function api(method: string, path: string, body?: any) {
+    const opts: any = { method, headers: { ...H() } };
+    if (body) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+    const res = await fetch(BASE + path, opts);
+    if (!res.ok) throw new Error(await res.text());
+    if (res.status === 204) return null;
+    return res.json();
   }
 
-  useEffect(() => { loadAll(); const t = setInterval(loadAll, 10000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    Promise.all([api("GET", "/health"), api("GET", "/stats"), api("GET", "/keys")])
+      .then(([h, s, k]) => { setHealth(h); setStats(s); setKeys(k || []); })
+      .catch(() => {});
+    const t = setInterval(() => {
+      api("GET", "/health").then(setHealth).catch(() => {});
+      api("GET", "/stats").then(setStats).catch(() => {});
+    }, 10000);
+    return () => clearInterval(t);
+  }, []);
 
   async function loadQuota() {
     if (!quotaUser) return;
     try {
-      const q = await get(`/quotas/${quotaUser}`);
+      const q = await api("GET", `/quotas/${quotaUser}`);
       setQuota(q); setQForm({ max_concurrent: q.max_concurrent, max_daily: q.max_daily, max_storage_bytes: q.max_storage_bytes, max_timeout_sec: q.max_timeout_sec });
     } catch { setQuota(null); }
   }
 
-  async function saveQuota() {
-    try { await put(`/quotas/${quotaUser}`, qForm); setMsg("Quota saved"); loadQuota(); } catch (e: any) { setMsg(e.message); }
-  }
-
-  async function deleteQuota() {
-    try { await del(`/quotas/${quotaUser}`); setQuota(null); setMsg("Quota reset"); } catch (e: any) { setMsg(e.message); }
-  }
-
+  async function saveQuota() { try { await api("PUT", `/quotas/${quotaUser}`, qForm); setMsg("Saved"); loadQuota(); } catch (e: any) { setMsg(e.message); } }
+  async function deleteQuota() { try { await api("DELETE", `/quotas/${quotaUser}`); setQuota(null); setMsg("Reset"); } catch (e: any) { setMsg(e.message); } }
   async function createKey() {
     if (!newKeyUser) return;
-    try {
-      const r = await post("/keys", { user_id: newKeyUser });
-      setNewKeyVal(r.api_key); setMsg(`Key created for ${newKeyUser}`); loadAll();
-    } catch (e: any) { setMsg(e.message); }
+    try { const r = await api("POST", "/keys", { user_id: newKeyUser }); setNewKeyVal(r.api_key); setMsg("Created"); api("GET", "/keys").then(k => setKeys(k || [])); } catch (e: any) { setMsg(e.message); }
   }
-
-  async function revokeKey(uid: string) {
-    try { await del(`/keys/${uid}`); setMsg(`Key revoked for ${uid}`); loadAll(); } catch (e: any) { setMsg(e.message); }
-  }
+  async function revokeKey(uid: string) { try { await api("DELETE", `/keys/${uid}`); setMsg("Revoked"); api("GET", "/keys").then(k => setKeys(k || [])); } catch (e: any) { setMsg(e.message); } }
 
   return (
     <div>
-      <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, color: "var(--text)" }}>Admin Panel</div>
-      {msg && <div className="card" style={{ padding: "8px 16px", marginBottom: 12, fontSize: 12, color: msg.includes("saved") || msg.includes("created") ? "var(--green)" : "var(--red)" }}>{msg}</div>}
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+        <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text)" }}>Admin</div>
+        <div className="tabs" style={{ marginBottom: 0 }}>
+          {(["overview", "quotas", "keys"] as Page[]).map(p => (
+            <button key={p} className={page === p ? "active" : ""} onClick={() => { setPage(p); setMsg(""); }}>
+              {p === "overview" ? "Overview" : p === "quotas" ? "Quotas" : "API Keys"}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      {/* Health + Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-        <div className="card">
-          <h2>System Health</h2>
-          {health && (
-            <div>
+      {msg && <div className="card" style={{ padding: "6px 14px", marginBottom: 12, fontSize: 12, color: msg.includes("Saved") || msg.includes("Created") || msg.includes("Revoked") ? "var(--green)" : "var(--red)" }}>{msg}</div>}
+
+      {page === "overview" && health && stats && (
+        <div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+            <div className="card">
+              <h2>System Health</h2>
               <div className="stat-row"><span>DB</span><span style={{ color: "var(--green)" }}>online</span></div>
               <div className="stat-row"><span>Active Workers</span><span>{health.active_workers}</span></div>
-              <div className="stat-row"><span>Pending</span><span>{health.pending_builds}</span></div>
-              <div className="stat-row"><span>Queue</span><span>{health.queue_depth}</span></div>
+              <div className="stat-row"><span>Pending Builds</span><span>{health.pending_builds}</span></div>
+              <div className="stat-row"><span>Queue Depth</span><span>{health.queue_depth}</span></div>
             </div>
-          )}
-        </div>
-        <div className="card">
-          <h2>Stats</h2>
-          {stats && (
-            <div>
-              <div className="stat-row"><span>Total</span><span>{stats.total_builds}</span></div>
+            <div className="card">
+              <h2>Build Stats</h2>
+              <div className="stat-row"><span>Total Builds</span><span>{stats.total_builds}</span></div>
               <div className="stat-row"><span>Succeeded</span><span style={{ color: "var(--green)" }}>{stats.succeeded}</span></div>
               <div className="stat-row"><span>Failed</span><span style={{ color: "var(--red)" }}>{stats.failed}</span></div>
-              <div className="stat-row"><span>Rate</span><span>{stats.success_rate?.toFixed(1)}%</span></div>
+              <div className="stat-row"><span>Success Rate</span><span>{stats.success_rate?.toFixed(1)}%</span></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {page === "quotas" && (
+        <div className="card">
+          <h2>Quota Management</h2>
+          <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>Set per-user limits. 0 = unlimited.</p>
+          <div className="row" style={{ marginBottom: 12 }}>
+            <input placeholder="User ID" value={quotaUser} onChange={(e) => setQuotaUser(e.target.value)} style={{ flex: 1 }} />
+            <button onClick={loadQuota}>Load</button>
+          </div>
+          {quota !== null && quota !== undefined && (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
+                <label className="qlabel">Max Concurrent <input type="number" value={qForm.max_concurrent} onChange={e => setQForm({ ...qForm, max_concurrent: +e.target.value })} /></label>
+                <label className="qlabel">Max Daily <input type="number" value={qForm.max_daily} onChange={e => setQForm({ ...qForm, max_daily: +e.target.value })} /></label>
+                <label className="qlabel">Max Storage (bytes) <input type="number" value={qForm.max_storage_bytes} onChange={e => setQForm({ ...qForm, max_storage_bytes: +e.target.value })} /></label>
+                <label className="qlabel">Max Timeout (sec) <input type="number" value={qForm.max_timeout_sec} onChange={e => setQForm({ ...qForm, max_timeout_sec: +e.target.value })} /></label>
+              </div>
+              <div className="row">
+                <button onClick={saveQuota}>Save</button>
+                <button className="danger" onClick={deleteQuota}>Reset to Unlimited</button>
+              </div>
             </div>
           )}
         </div>
-      </div>
+      )}
 
-      {/* Worker control */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h2>Worker Control</h2>
-        <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>Scale workers by deploying more instances via K8s or compose. This shows current count.</p>
-        <div className="stat-row">
-          <span>Active Workers</span>
-          <span style={{ fontSize: 18, fontWeight: 700, color: "var(--primary)" }}>{health?.active_workers || 0}</span>
-        </div>
-      </div>
-
-      {/* Quotas */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h2>Quota Management</h2>
-        <div className="row" style={{ marginBottom: 12 }}>
-          <input placeholder="User ID" value={quotaUser} onChange={(e) => setQuotaUser(e.target.value)} style={{ flex: 1 }} />
-          <button onClick={loadQuota}>Load</button>
-        </div>
-        {quota !== null && (
-          <div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-              <label className="qlabel">Max Concurrent <input type="number" value={qForm.max_concurrent} onChange={(e) => setQForm({ ...qForm, max_concurrent: +e.target.value })} /></label>
-              <label className="qlabel">Max Daily <input type="number" value={qForm.max_daily} onChange={(e) => setQForm({ ...qForm, max_daily: +e.target.value })} /></label>
-              <label className="qlabel">Max Storage (bytes) <input type="number" value={qForm.max_storage_bytes} onChange={(e) => setQForm({ ...qForm, max_storage_bytes: +e.target.value })} /></label>
-              <label className="qlabel">Max Timeout (sec) <input type="number" value={qForm.max_timeout_sec} onChange={(e) => setQForm({ ...qForm, max_timeout_sec: +e.target.value })} /></label>
+      {page === "keys" && (
+        <div className="card">
+          <h2>API Key Management</h2>
+          <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>Create and revoke user API keys.</p>
+          <div className="row" style={{ marginBottom: 16 }}>
+            <input placeholder="User ID" value={newKeyUser} onChange={(e) => setNewKeyUser(e.target.value)} style={{ flex: 1 }} />
+            <button onClick={createKey}>Create Key</button>
+          </div>
+          {newKeyVal && (
+            <div style={{ background: "var(--bg)", border: "1px solid var(--green)", borderRadius: 8, padding: 10, marginBottom: 16, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+              {newKeyVal}
+              <button className="small" onClick={() => { navigator.clipboard.writeText(newKeyVal); setMsg("Copied!"); }} style={{ marginLeft: 8 }}>Copy</button>
             </div>
-            <div className="row">
-              <button onClick={saveQuota}>Save</button>
-              <button className="danger" onClick={deleteQuota}>Reset</button>
+          )}
+          <h2 style={{ marginTop: 16 }}>Existing Keys ({keys.length})</h2>
+          {keys.map((k: any) => (
+            <div key={k.user_id} className="stat-row" style={{ padding: "8px 0" }}>
+              <span style={{ fontWeight: 600 }}>{k.user_id}</span>
+              <span style={{ fontFamily: "monospace", color: "var(--muted)", fontSize: 11 }}>{k.key}</span>
+              <button className="danger small" onClick={() => revokeKey(k.user_id)}>Revoke</button>
             </div>
-          </div>
-        )}
-      </div>
-
-      {/* API Keys */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h2>API Keys</h2>
-        <div className="row" style={{ marginBottom: 12 }}>
-          <input placeholder="User ID" value={newKeyUser} onChange={(e) => setNewKeyUser(e.target.value)} style={{ flex: 1 }} />
-          <button onClick={createKey}>Create</button>
+          ))}
         </div>
-        {newKeyVal && (
-          <div style={{ background: "var(--bg)", border: "1px solid var(--green)", borderRadius: 6, padding: 8, marginBottom: 8, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
-            {newKeyVal}
-            <button className="small" onClick={() => { navigator.clipboard.writeText(newKeyVal); setMsg("Copied!"); }} style={{ marginLeft: 8 }}>Copy</button>
-          </div>
-        )}
-        {keys.map((k: any) => (
-          <div key={k.user_id} className="stat-row" style={{ padding: "6px 0" }}>
-            <span>{k.user_id}</span>
-            <span style={{ fontFamily: "monospace", color: "var(--muted)" }}>{k.key}</span>
-            <button className="danger small" onClick={() => revokeKey(k.user_id)}>Revoke</button>
-          </div>
-        ))}
-      </div>
+      )}
     </div>
   );
 }
