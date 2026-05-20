@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,7 @@ import (
 	"github.com/xenoglossy/dtbuildkit/internal/quota"
 	"github.com/xenoglossy/dtbuildkit/internal/repo"
 	"github.com/xenoglossy/dtbuildkit/internal/scheduler"
+	"github.com/xenoglossy/dtbuildkit/internal/validate"
 )
 
 // BuildService handles build lifecycle.
@@ -34,6 +36,15 @@ func NewBuildService(r *repo.BuildRepo, blobs oss.BlobStore, sched *scheduler.Sc
 
 // SubmitBuild creates a new build. If buildID is empty, one is generated.
 func (s *BuildService) SubmitBuild(buildID, ctxKey string, dockerfileContent []byte, imageTag string, userID string, timeoutSec int, args map[string]string) (*domain.Build, error) {
+	// Pre-flight validation
+	v := validate.Single(validate.BuildInput{
+		Dockerfile: string(dockerfileContent),
+		ImageTag:   imageTag,
+	})
+	if !v.Valid() {
+		return nil, fmt.Errorf("validation failed: %s", strings.Join(v.Errors, "; "))
+	}
+
 	if buildID == "" {
 		buildID = uuid.New().String()
 	}
@@ -81,6 +92,20 @@ func (s *BuildService) SubmitBulkBuild(contextData []byte, tagPrefix string, use
 	}
 	if len(subdirs) == 0 {
 		return nil, fmt.Errorf("no Dockerfiles found in archive")
+	}
+
+	// Pre-flight validation
+	bulkEntries := make([]validate.BulkEntry, len(subdirs))
+	for i, sd := range subdirs {
+		bulkEntries[i] = validate.BulkEntry{
+			Path:    sd.path,
+			Name:    sd.name,
+			Content: sd.content,
+		}
+	}
+	v := validate.Bulk(bulkEntries)
+	if !v.Valid() {
+		return nil, fmt.Errorf("validation failed: %s", strings.Join(v.Errors, "; "))
 	}
 
 	// Apply quota — check each build slot (both daily and concurrent)
