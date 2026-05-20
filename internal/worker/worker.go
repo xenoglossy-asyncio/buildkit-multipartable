@@ -303,7 +303,17 @@ func (w *Worker) downloadContext(buildID, dest string) error {
 }
 
 func (w *Worker) sendLog(buildID, line string) {
-	w.doPost("/api/v1/builds/"+buildID+"/log", line)
+	for i := 0; i < 3; i++ {
+		code, err := w.doPost("/api/v1/builds/"+buildID+"/log", line)
+		if err == nil && code == 200 {
+			return
+		}
+		if i < 2 {
+			slog.Warn("sendLog failed, retrying", "build", buildID, "attempt", i+1, "error", err, "code", code)
+			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
+		}
+	}
+	slog.Error("sendLog failed after retries", "build", buildID, "line", line[:min(len(line), 200)])
 }
 
 func (w *Worker) completeBuild(buildID string, status domain.Status, errMsg, digest string) {

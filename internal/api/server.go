@@ -370,15 +370,51 @@ func (s *Server) completeBuild(w http.ResponseWriter, r *http.Request) {
 	if body.Status == domain.StatusSucceeded {
 		b, _ := s.db.Builds.Get(id)
 		if b != nil && b.Logs != "" {
-			var hits, misses int
-			for _, line := range strings.Split(b.Logs, "\n") {
-				if strings.Contains(line, "CACHED") {
-					hits++
-				} else if strings.Contains(line, "DONE") && !strings.Contains(line, "CACHED") {
-					misses++
+			var hits, total int
+			lines := strings.Split(b.Logs, "\n")
+			// Match lines like: #7 [3/6] RUN apt-get install...
+			// Pattern: #N [M/T] where N, M, T are numbers
+			for i, line := range lines {
+				// Must start with # followed by number, then space, then [number/number]
+				if len(line) < 5 || line[0] != '#' {
+					continue
+				}
+				// Find the bracket pattern [M/T]
+				bracketStart := strings.Index(line, "[")
+				bracketEnd := strings.Index(line, "]")
+				if bracketStart == -1 || bracketEnd == -1 || bracketEnd <= bracketStart {
+					continue
+				}
+				bracketContent := line[bracketStart+1 : bracketEnd]
+				// Check if it's M/T format (two numbers separated by /)
+				if !strings.Contains(bracketContent, "/") {
+					continue
+				}
+				parts := strings.Split(bracketContent, "/")
+				if len(parts) != 2 {
+					continue
+				}
+				// Verify both parts are numbers
+				var m, t int
+				if _, err := fmt.Sscanf(parts[0], "%d", &m); err != nil {
+					continue
+				}
+				if _, err := fmt.Sscanf(parts[1], "%d", &t); err != nil {
+					continue
+				}
+
+				// This is a valid layer line, check next line for CACHED/DONE
+				if i+1 < len(lines) {
+					nextLine := lines[i+1]
+					if strings.Contains(nextLine, "CACHED") {
+						hits++
+						total++
+					} else if strings.Contains(nextLine, "DONE") {
+						total++
+					}
 				}
 			}
-			if total := hits + misses; total > 0 {
+			if total > 0 {
 				s.db.Builds.SetCacheRate(id, float64(hits)/float64(total)*100)
 			}
 		}

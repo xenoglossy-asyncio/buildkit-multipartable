@@ -17,10 +17,12 @@ function timeStr(b: Build): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60}s`;
 }
 function cachePct(b: Build): string {
-  if (!b.logs) return "—";
-  const c = (b.logs.match(/CACHED/g) || []).length;
-  const d = (b.logs.match(/DONE/g) || []).length;
-  return d === 0 ? "—" : `${Math.round((c / d) * 100)}%`;
+  // Use stored cache_hit_rate from backend (computed at build completion)
+  // Backend stores as percentage (0-100), display directly
+  if (b.cache_hit_rate !== undefined && b.cache_hit_rate !== null) {
+    return `${Math.round(b.cache_hit_rate)}%`;
+  }
+  return "—";
 }
 
 export default function BuildList({ selected, onSelect }: Props) {
