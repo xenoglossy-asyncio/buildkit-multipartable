@@ -1,6 +1,4 @@
 import { useState, useEffect } from "react";
-import { getCached, setCached } from "../lib/useCache";
-import { getCached, setCached } from "../lib/useCache";
 
 const BASE = "/api/v1/admin";
 const H = (): Record<string, string> => {
@@ -25,8 +23,7 @@ export default function AdminPanel() {
   const [keys, setKeys] = useState<any[]>([]);
   const [users, setUsers] = useState<string[]>([]);
   const [selectedUser, setSelectedUser] = useState("");
-  const [quota, setQuota] = useState<any>(null);
-  const [qForm, setQForm] = useState({ max_concurrent: 5, max_daily: 100, max_storage_bytes: 0, max_timeout_sec: 1800 });
+    const [qForm, setQForm] = useState({ max_concurrent: 5, max_daily: 100, max_storage_bytes: 0, max_timeout_sec: 1800 });
   const [newKeyUser, setNewKeyUser] = useState("");
   const [newKeyVal, setNewKeyVal] = useState("");
   const [msg, setMsg] = useState("");
@@ -46,14 +43,14 @@ export default function AdminPanel() {
     setSelectedUser(uid);
     try {
       const q = await api("GET", `/quotas/${uid}`);
-      setQuota(q); setQForm({ max_concurrent: q.max_concurrent, max_daily: q.max_daily, max_storage_bytes: q.max_storage_bytes, max_timeout_sec: q.max_timeout_sec });
-    } catch { setQuota(null); setQForm({ max_concurrent: 5, max_daily: 100, max_storage_bytes: 0, max_timeout_sec: 1800 }); }
+      setQForm({ max_concurrent: q.max_concurrent, max_daily: q.max_daily, max_storage_bytes: q.max_storage_bytes, max_timeout_sec: q.max_timeout_sec });
+    } catch { setQForm({ max_concurrent: 5, max_daily: 100, max_storage_bytes: 0, max_timeout_sec: 1800 }); }
   }
 
   async function saveQuota() {
     try { await api("PUT", `/quotas/${selectedUser}`, qForm); setMsg("Quota saved"); loadQuota(selectedUser); } catch (e: any) { setMsg(e.message); }
   }
-  async function resetQuota() { try { await api("DELETE", `/quotas/${selectedUser}`); setQuota(null); setMsg("Reset"); } catch (e: any) { setMsg(e.message); } }
+  async function resetQuota() { try { await api("DELETE", `/quotas/${selectedUser}`); setMsg("Reset"); } catch (e: any) { setMsg(e.message); } }
   async function createKey() {
     if (!newKeyUser) return;
     try { const r = await api("POST", "/keys", { user_id: newKeyUser }); setNewKeyVal(r.api_key); setMsg("Key created"); api("GET", "/keys").then(k => { setKeys(k || []); setUsers((k || []).map((x: any) => x.user_id)); }); } catch (e: any) { setMsg(e.message); }

@@ -39,6 +39,8 @@ export interface Build {
   created_at: string;
   updated_at: string;
   completed_at?: string;
+  user_id?: string;
+  cache_hit_rate?: number;
 }
 
 export interface BuildPage {

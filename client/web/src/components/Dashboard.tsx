@@ -3,7 +3,6 @@ import { getCached, setCached } from "../lib/useCache";
 
 interface Stats { total_builds: number; succeeded: number; failed: number; success_rate: number; pending: number; active_workers: number; queue_depth: number; }
 interface Averages { avg_build_sec: number; cache_hit_rate: number; }
-interface Daily { days: number; counts: number[]; }
 interface UserStat { user_id: string; count: number; succeeded: number; failed: number; avg_time_sec: number; cache_rate: number; success_rate: number; }
 interface RunningBuild { id: string; image_tag: string; status: string; elapsed: string; user_id: string; }
 

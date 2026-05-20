@@ -26,7 +26,7 @@ function cachePct(b: Build): string {
 export default function BuildList({ selected, onSelect }: Props) {
   const [page, setPage] = useState<BuildPage | null>(null);
   const [pg, setPg] = useState(0);
-  const [pp, setPp] = useState(15);
+  const [pp, sp] = useState(15);
   const [jump, setJump] = useState("");
 
   async function load() {
@@ -56,6 +56,9 @@ export default function BuildList({ selected, onSelect }: Props) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={{ margin: 0 }}>Builds {page ? <span style={{ color: "var(--muted)", fontWeight: 400 }}>({page.total})</span> : <span style={{ color: "var(--muted)", fontWeight: 400, fontSize: 12 }}>loading...</span>}</h2>
         <button className="small ghost" onClick={load}>Refresh</button>
+        <select value={pp} onChange={e => { sp(+e.target.value); setPg(0); }} style={{ fontSize: 11, padding: "2px 6px" }}>
+          {[10, 20, 50, 100].map(n => <option key={n} value={n}>{n}/pg</option>)}
+        </select>
       </div>
 
       {/* Column headers */}

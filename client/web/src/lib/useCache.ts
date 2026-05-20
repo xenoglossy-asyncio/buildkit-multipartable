@@ -18,7 +18,7 @@ export function setCached(key: string, data: any): void {
   } catch {}
 }
 
-export function useCached<T>(key: string, fetcher: () => Promise<T>, ttlMs = 5000): [T | null, () => void] {
+export function useCached<T>(key: string, _fetcher: () => Promise<T>, ttlMs = 5000): [T | null, () => void] {
   // Returns [data, refresh]. Caller handles loading state.
   // This is a sync check — caller should use it before fetch.
   return [getCached(key, ttlMs), () => {}];

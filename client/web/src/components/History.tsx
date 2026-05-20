@@ -25,7 +25,6 @@ export default function History() {
   const [stats, setStats] = useState<any>(null);
   const [avg, setAvg] = useState<any>(null);
 
-  const d = customDays || days;
 
   useEffect(() => {
     const key = `history-${d}`;
@@ -43,8 +42,6 @@ export default function History() {
     });
   }, [d]);
 
-  const needAgg = d > 14;
-  const agg = needAgg ? Math.ceil(d / 14) : 1;
   const agg = d <= 14 ? 1 : Math.ceil(d / 14);
   const dl = daily;
   const maxD = dl ? Math.max(1, ...dl.counts) : 1;
@@ -103,7 +100,7 @@ export default function History() {
         {dl && dl.counts.length > 0 ? (
           <div>
             <div className="bar-chart" style={{ height: 140, alignItems: "flex-end", marginBottom: 8 }}>
-              {dl.counts.filter((_: number, i: number) => i % agg === 0).map((total: number, i: number) => {
+              {dl.counts.filter((_: number, i: number) => i % agg === 0).map((_total: number, i: number) => {
                 const idx = i * agg;
                 // Aggregate next 'agg' days
                 let ok = 0, fail = 0;
