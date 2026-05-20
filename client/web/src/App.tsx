@@ -18,6 +18,7 @@ const TABS: { key: Tab; label: string }[] = [
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false);
+  const [apiKey, setApiKeyVal] = useState("");
   const [tab, setTab] = useState<Tab>("dashboard");
   const [builds, setBuilds] = useState<Build[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -38,6 +39,7 @@ function App() {
 
   function handleLogin(key: string, admin: boolean) {
     setApiKey(key);
+    setApiKeyVal(key);
     setIsAdmin(admin);
     setLoggedIn(true);
   }
@@ -68,7 +70,7 @@ function App() {
       </header>
 
       <main className={tab === "dashboard" ? "dashboard-grid" : ""}>
-        {tab === "dashboard" && <Dashboard />}
+        {tab === "dashboard" && <Dashboard isAdmin={isAdmin} apiKey={apiKey} />}
 
         {tab === "submit" && (
           <SubmitBuild onSubmitted={(b) => { setSelected(b.id); refresh(); setTab("builds"); }} />

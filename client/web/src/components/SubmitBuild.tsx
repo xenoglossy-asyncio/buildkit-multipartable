@@ -148,11 +148,11 @@ export default function SubmitBuild({ onSubmitted }: Props) {
               onChange={(e) => {
                 if (e.target.files && e.target.files.length > 0) {
                   filesRef.current = Array.from(e.target.files);
-                  setFileName(
-                    `${e.target.files.length} files selected`,
-                  );
+                  const dir = e.target.files[0].webkitRelativePath?.split("/")[0] || "";
+                  setFileName(dir ? `${dir} (${e.target.files.length} files)` : `${e.target.files.length} files selected`);
                 }
               }}
+              {...{ webkitdirectory: "" } as any}
               multiple
             />
           </label>
