@@ -83,9 +83,9 @@ func (s *Server) setupRoutes() {
 	s.router.Use(middleware.Logger)
 	s.router.Use(middleware.Recoverer)
 	s.router.Use(middleware.Timeout(5 * time.Minute))
-	s.router.Use(authMiddleware)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
+		// Build endpoints
 		r.Post("/builds", s.submitBuild)
 		r.Post("/builds/bulk", s.submitBulkBuild)
 		r.Get("/builds", s.listBuilds)
@@ -96,52 +96,31 @@ func (s *Server) setupRoutes() {
 		r.Post("/builds/{id}/complete", s.completeBuild)
 		r.Delete("/builds/{id}", s.cancelBuild)
 
+		// Blob storage
 		r.Get("/blobs/*", s.serveBlob)
 
+		// Worker endpoints
 		r.Post("/workers/heartbeat", s.workerHeartbeat)
+
+		// Admin endpoints (internal, used by FastAPI service)
+		r.Get("/admin/health", s.adminHealth)
+		r.Get("/admin/stats", s.adminStats)
+		r.Get("/admin/quotas/{user_id}", s.getQuota)
+		r.Put("/admin/quotas/{user_id}", s.setQuota)
+		r.Delete("/admin/quotas/{user_id}", s.deleteQuota)
+		r.Get("/admin/keys", s.listAPIKeys)
+		r.Post("/admin/keys", s.createAPIKey)
+		r.Delete("/admin/keys/{user_id}", s.revokeAPIKey)
+		r.Post("/admin/builds/cleanup", s.manualGC)
+
+		// Stats (used by FastAPI dashboard)
+		r.Get("/stats", s.publicStats)
 	})
-
-	s.router.Route("/api/v1/admin", s.setupAdminRoutes)
-
-	s.router.Get("/api/v1/stats", s.publicStats)
 
 	s.router.Get("/metrics", metricsHandler)
 	s.router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
-	})
-}
-
-// GET /api/v1/stats — public endpoint, no auth required
-func (s *Server) publicStats(w http.ResponseWriter, r *http.Request) {
-	builds, _ := s.db.Builds.List(1000)
-	var total, succeeded, failed int64
-	for _, b := range builds {
-		total++
-		switch b.Status {
-		case domain.StatusSucceeded:
-			succeeded++
-		case domain.StatusFailed, domain.StatusTimedOut:
-			failed++
-		}
-	}
-	rate := 0.0
-	if total > 0 {
-		rate = float64(succeeded) / float64(total) * 100
-	}
-	pending, _ := s.db.Builds.CountPending()
-	active, _ := s.db.Workers.CountActive(30 * time.Second)
-	queueLen := s.buildSvc.QueueLen()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"total_builds":   total,
-		"succeeded":      succeeded,
-		"failed":         failed,
-		"success_rate":   rate,
-		"pending":        pending,
-		"active_workers": active,
-		"queue_depth":    queueLen,
 	})
 }
 

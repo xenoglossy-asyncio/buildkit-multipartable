@@ -61,15 +61,22 @@ services:
       - server-data:/data
     restart: unless-stopped
 
-  # ---- Web Frontend (nginx serving SPA + API proxy) ----
-  web:
-    image: nginx:alpine
-    container_name: dtbuild-web
+  # ---- User-Facing Service (FastAPI + SPA) ----
+  client:
+    image: python:3.13-alpine
+    container_name: dtbuild-client
+    working_dir: /app
+    command: >
+      sh -c "pip install uv && uv sync && uv run uvicorn main:app --host 0.0.0.0 --port 3000 --reload"
     ports:
-      - "3000:80"
+      - "3000:3000"
+    environment:
+      BUILD_SERVICE: http://server:8640
+      DTBUILD_ADMIN_KEY: fucking-admin-dtbuildkit
     volumes:
-      - ./web/dist:/usr/share/nginx/html:ro
-      - ./deploy/nginx-web.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./client:/app
+      - client-uv-cache:/root/.cache/uv
+      - client-venv:/app/.venv
     depends_on:
       - server
     restart: unless-stopped
@@ -172,6 +179,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  client-uv-cache:
+  client-venv:
   buildkit-data:
   buildkit-sock:
   server-data:

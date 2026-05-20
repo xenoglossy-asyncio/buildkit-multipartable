@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 
 interface Props {
-  onLogin: (key: string) => void;
+  onLogin: (key: string, isAdmin: boolean) => void;
 }
 
 export default function Login({ onLogin }: Props) {
@@ -11,24 +11,45 @@ export default function Login({ onLogin }: Props) {
   useEffect(() => {
     const saved = localStorage.getItem("dtbuild_api_key");
     if (saved) {
-      onLogin(saved);
+      tryAutoLogin(saved);
     }
-  }, [onLogin]);
+  }, []);
 
-  async function handleLogin() {
-    if (!key.trim()) return;
+  async function tryAutoLogin(savedKey: string) {
     try {
-      const res = await fetch("/api/v1/stats");
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: savedKey }),
+      });
       if (res.ok) {
-        localStorage.setItem("dtbuild_api_key", key.trim());
-        onLogin(key.trim());
-      } else {
-        setError("Invalid API key");
+        const data = await res.json();
+        onLogin(savedKey, data.is_admin);
       }
     } catch {
-      // Allow login even if server not reachable (dev mode)
+      // server not ready, try again later
+    }
+  }
+
+  async function handleLogin() {
+    setError("");
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: key.trim() }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem("dtbuild_api_key", key.trim());
+        onLogin(key.trim(), data.is_admin);
+      } else {
+        const data = await res.json();
+        setError(data.detail || "Invalid API key");
+      }
+    } catch {
       localStorage.setItem("dtbuild_api_key", key.trim());
-      onLogin(key.trim());
+      onLogin(key.trim(), false);
     }
   }
 

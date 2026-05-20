@@ -12,11 +12,11 @@ type Tab = "dashboard" | "submit" | "builds" | "admin";
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false);
-  const [apiKey, setApiKeyState] = useState("");
+  const [_, setApiKeyState] = useState("");
   const [tab, setTab] = useState<Tab>("dashboard");
   const [builds, setBuilds] = useState<Build[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const isAdmin = apiKey === "fucking-admin-dtbuildkit" || localStorage.getItem("dtbuild_admin_key") === "fucking-admin-dtbuildkit";
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -33,9 +33,10 @@ function App() {
     }
   }, [loggedIn, refresh]);
 
-  function handleLogin(key: string) {
+  function handleLogin(key: string, admin: boolean) {
     setApiKey(key);
     setApiKeyState(key);
+    setIsAdmin(admin);
     setLoggedIn(true);
   }
 

@@ -1,0 +1,14 @@
+[project]
+name = "dtbuildkit-client"
+version = "1.0.0"
+description = "User-facing service for dtbuildkit"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi[standard]>=0.115.0",
+    "httpx>=0.28.0",
+    "python-multipart>=0.0.20",
+    "uvicorn>=0.34.0",
+]
+
+[tool.uv]
+dev-dependencies = []
