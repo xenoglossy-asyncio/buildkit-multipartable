@@ -1,164 +1,159 @@
+// Package buildkit wraps the BuildKit gRPC client for image builds.
 package buildkit
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"strings"
-	"sync"
+	"time"
+
+	"github.com/moby/buildkit/client"
+	fsutil "github.com/tonistiigi/fsutil"
+	"github.com/moby/buildkit/session"
+	"github.com/moby/buildkit/session/auth/authprovider"
 )
 
 // BuildOptions configures a build.
 type BuildOptions struct {
 	ContextDir string
-	Dockerfile string // path to Dockerfile within context
-	OutputTag  string // image:tag to push to
-	CacheFrom  string // registry cache reference for import
-	CacheTo    string // registry cache reference for export (mode=max appended)
+	Dockerfile string
+	OutputTag  string
+	CacheFrom  string
+	CacheTo    string
 	BuildArgs  map[string]string
-}
-
-// Client wraps buildctl for executing builds.
-type Client struct {
-	buildctlPath string
-	buildkitAddr string
-}
-
-// NewClient creates a new BuildKit client.
-func NewClient(buildkitAddr string) (*Client, error) {
-	path, err := exec.LookPath("buildctl")
-	if err != nil {
-		return nil, fmt.Errorf("buildctl not found in PATH: %w", err)
-	}
-	return &Client{
-		buildctlPath: path,
-		buildkitAddr: buildkitAddr,
-	}, nil
-}
-
-// LogEntry represents a single line of buildctl --debug output or structured progress.
-type LogEntry struct {
-	Stream string `json:"stream,omitempty"`
-	Error  string `json:"error,omitempty"`
-	Raw    string `json:"raw"`
 }
 
 // BuildResult holds the outcome of a build.
 type BuildResult struct {
 	ImageDigest string
-	ImageID     string
 }
 
-// Build executes a build via buildctl and streams logs to the provided writer.
-// If logWriter is nil, logs are discarded.
+// Client wraps BuildKit's gRPC client.
+type Client struct {
+	addr string
+}
+
+// NewClient creates a new BuildKit client.
+func NewClient(buildkitAddr string) (*Client, error) {
+	return &Client{addr: buildkitAddr}, nil
+}
+
+// Build executes a build via BuildKit gRPC and streams logs to the provided writer.
 func (c *Client) Build(ctx context.Context, opts BuildOptions, logWriter io.Writer) (*BuildResult, error) {
-	// Validate dockerfile exists
-	dockerfilePath := opts.ContextDir + "/" + opts.Dockerfile
-	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("Dockerfile not found at %s", dockerfilePath)
-	}
-
-	args := []string{
-		"--addr=" + c.buildkitAddr,
-		"build",
-		"--frontend=dockerfile.v0",
-		"--local=context=" + opts.ContextDir,
-		"--local=dockerfile=" + opts.ContextDir,
-		"--opt=filename=" + opts.Dockerfile,
-	}
-
-	if opts.OutputTag != "" {
-		args = append(args, "--output=type=image,name="+opts.OutputTag+",push=true")
-	}
-
-	if opts.CacheFrom != "" {
-		args = append(args, "--import-cache=type=registry,ref="+opts.CacheFrom)
-	}
-	if opts.CacheTo != "" {
-		args = append(args, "--export-cache=type=registry,ref="+opts.CacheTo+",mode=max")
-	}
-
-	for k, v := range opts.BuildArgs {
-		args = append(args, "--opt=build-arg:"+k+"="+v)
-	}
-
-	cmd := exec.CommandContext(ctx, c.buildctlPath, args...)
-	cmd.Env = append(os.Environ(), "BUILDKIT_HOST="+c.buildkitAddr)
-
-	var stderrBuf strings.Builder
-	cmd.Stderr = &stderrBuf
-
-	stdout, err := cmd.StdoutPipe()
+	bkClient, err := client.New(ctx, c.addr)
 	if err != nil {
-		return nil, fmt.Errorf("create stdout pipe: %w", err)
+		return nil, fmt.Errorf("connect to buildkitd: %w", err)
+	}
+	defer bkClient.Close()
+
+	contextFS, err := fsutil.NewFS(opts.ContextDir)
+	if err != nil {
+		return nil, fmt.Errorf("create context fs: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start buildctl: %w", err)
+	solveOpt := client.SolveOpt{
+		Frontend: "dockerfile.v0",
+		LocalMounts: map[string]fsutil.FS{
+			"context":    contextFS,
+			"dockerfile": contextFS,
+		},
+		FrontendAttrs: map[string]string{
+			"filename": opts.Dockerfile,
+		},
+		Session: []session.Attachable{
+			authprovider.NewDockerAuthProvider(authprovider.DockerAuthProviderConfig{}),
+		},
 	}
 
-	var logWG sync.WaitGroup
-	logWG.Add(1)
+	// Build args
+	for k, v := range opts.BuildArgs {
+		solveOpt.FrontendAttrs["build-arg:"+k] = v
+	}
+
+	// Output
+	if opts.OutputTag != "" {
+		solveOpt.Exports = []client.ExportEntry{
+			{
+				Type: client.ExporterImage,
+				Attrs: map[string]string{
+					"name": opts.OutputTag,
+					"push": "true",
+				},
+			},
+		}
+	}
+
+	// Cache import
+	if opts.CacheFrom != "" {
+		solveOpt.CacheImports = []client.CacheOptionsEntry{
+			{
+				Type: "registry",
+				Attrs: map[string]string{
+					"ref": opts.CacheFrom,
+				},
+			},
+		}
+	}
+
+	// Cache export
+	if opts.CacheTo != "" {
+		solveOpt.CacheExports = []client.CacheOptionsEntry{
+			{
+				Type: "registry",
+				Attrs: map[string]string{
+					"ref":  opts.CacheTo,
+					"mode": "max",
+				},
+			},
+		}
+	}
+
+	ch := make(chan *client.SolveStatus)
+	done := make(chan struct{})
+
 	go func() {
-		defer logWG.Done()
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			line := scanner.Text()
-			entry := parseLogLine(line)
+		defer close(done)
+		for s := range ch {
 			if logWriter != nil {
-				fmt.Fprintln(logWriter, entry.Raw)
+				writeStatus(logWriter, s)
 			}
 		}
 	}()
 
-	// Wait for the command to exit first (closes stdout pipe),
-	// THEN wait for the log goroutine to drain remaining output.
-	waitErr := cmd.Wait()
-	logWG.Wait()
+	resp, err := bkClient.Solve(ctx, nil, solveOpt, ch)
+	<-done
 
-	if waitErr != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, fmt.Errorf("buildctl failed: %s", stderrBuf.String())
+	if err != nil {
+		return nil, fmt.Errorf("build failed: %w", err)
 	}
 
-	// Parse the final output for image digest
-	// buildctl outputs a JSON line with the result when using --output type=image
-	output := stderrBuf.String()
 	result := &BuildResult{}
-
-	// Try to parse containerimage.Descriptor from the output
-	// Format: {"containerimage.descriptor": {"digest": "sha256:...", "mediaType": "..."}}
-	if idx := strings.LastIndex(output, "containerimage.descriptor"); idx >= 0 {
-		var desc struct {
-			ContainerImageDescriptor struct {
-				Digest string `json:"digest"`
-			} `json:"containerimage.descriptor"`
-		}
-		if json.Unmarshal([]byte(output), &desc) == nil {
-			result.ImageDigest = desc.ContainerImageDescriptor.Digest
+	if resp != nil && resp.ExporterResponse != nil {
+		if digest, ok := resp.ExporterResponse["containerimage.digest"]; ok {
+			result.ImageDigest = digest
 		}
 	}
 
 	return result, nil
 }
 
-func parseLogLine(line string) LogEntry {
-	entry := LogEntry{Raw: line}
-
-	var msg struct {
-		Stream string `json:"stream"`
-		Error  string `json:"error"`
+func writeStatus(w io.Writer, s *client.SolveStatus) {
+	for _, v := range s.Vertexes {
+		fmt.Fprintf(w, "#%d [%s] %s", 0, v.Name, v.Started.Format(time.RFC3339))
+		if v.Completed != nil {
+			fmt.Fprintf(w, " %s", v.Completed.Sub(*v.Started))
+		}
+		if v.Error != "" {
+			fmt.Fprintf(w, " ERROR: %s", v.Error)
+		}
+		fmt.Fprintln(w)
 	}
-	if json.Unmarshal([]byte(line), &msg) == nil {
-		entry.Stream = msg.Stream
-		entry.Error = msg.Error
+	for _, l := range s.Logs {
+		fmt.Fprintf(w, "%s", l.Data)
 	}
-
-	return entry
+	// Flush after each status update
+	if f, ok := w.(interface{ Flush() error }); ok {
+		f.Flush()
+	}
 }
+
