@@ -30,6 +30,11 @@ export default function History() {
     const key = `history-${d}`;
     const cached = getCached(key, 10000);
     if (cached) { setDaily(cached.dl); setUsers(cached.us); setStats(cached.st); setAvg(cached.av); }
+    else {
+      // Clear old data while loading new data
+      setDaily(null);
+      setUsers([]);
+    }
 
     Promise.all([
       j(`/api/v1/stats/daily?days=${d}`),
@@ -52,16 +57,30 @@ export default function History() {
     <div>
       <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>History</div>
 
-      <div className="time-selector" style={{ marginBottom: 16 }}>
-        {RANGES.map(([label, nd]) => (
-          <button key={label} className={d === nd && !useCustom ? "active" : ""} onClick={() => { setDays(nd); setUseCustom(false); }}>{label}</button>
-        ))}
-        <button className={useCustom ? "active" : ""} onClick={() => setUseCustom(true)}>Custom</button>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <div className="time-selector">
+          {RANGES.map(([label, nd]) => (
+            <button key={label} className={d === nd && !useCustom ? "active" : ""} onClick={() => { setDays(nd); setUseCustom(false); }}>{label}</button>
+          ))}
+          <button className={useCustom ? "active" : ""} onClick={() => setUseCustom(true)}>Custom</button>
+        </div>
         {useCustom && (
-          <div className="date-range">
-            <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type="date"
+              value={customFrom}
+              onChange={e => setCustomFrom(e.target.value)}
+              style={{ cursor: "pointer" }}
+              onClick={e => (e.target as HTMLInputElement).showPicker?.()}
+            />
             <span style={{ color: "var(--muted)", fontSize: 11 }}>to</span>
-            <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} />
+            <input
+              type="date"
+              value={customTo}
+              onChange={e => setCustomTo(e.target.value)}
+              style={{ cursor: "pointer" }}
+              onClick={e => (e.target as HTMLInputElement).showPicker?.()}
+            />
             {d > 0 && <span style={{ color: "var(--muted)", fontSize: 11 }}>({d} days)</span>}
           </div>
         )}

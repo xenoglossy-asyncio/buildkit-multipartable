@@ -27,6 +27,9 @@ export default function AdminPanel() {
   const [newKeyUser, setNewKeyUser] = useState("");
   const [newKeyVal, setNewKeyVal] = useState("");
   const [msg, setMsg] = useState("");
+  const [userPg, setUserPg] = useState(0);
+  const [userPp, setUserPp] = useState(15);
+  const [userJump, setUserJump] = useState("");
 
   useEffect(() => {
     const cached = JSON.parse(sessionStorage.getItem("dtb_admin") || "null");
@@ -131,50 +134,84 @@ export default function AdminPanel() {
 
           {/* User table */}
           <div className="card">
-            <h2>Users ({users.length})</h2>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h2 style={{ margin: 0 }}>Users ({users.length})</h2>
+              <select value={userPp} onChange={e => { setUserPp(+e.target.value); setUserPg(0); }} style={{ fontSize: 11, padding: "2px 6px" }}>
+                {[10, 20, 50, 100].map(n => <option key={n} value={n}>{n}/pg</option>)}
+              </select>
+            </div>
             {users.length === 0 ? <p style={{ color: "var(--muted)", fontSize: 12 }}>No registered users yet.</p> : (
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>User ID</th><th>Key</th><th style={{ textAlign: "center", width: 60 }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map(u => {
-                    const hasKey = keys.find((k: any) => k.user_id === u);
-                    const expanded = selectedUser === u;
-                    return (
-                      <>
-                        <tr key={u} onClick={() => expanded ? setSelectedUser("") : loadQuota(u)} style={{ cursor: "pointer" }} className={expanded ? "expanded" : ""}>
-                          <td style={{ fontFamily: "monospace" }}>{u}</td>
-                          <td style={{ fontFamily: "monospace", color: "var(--muted)", fontSize: 11 }}>
-                            {hasKey ? hasKey.key : "—"}
-                          </td>
-                          <td style={{ textAlign: "center" }}>
-                            <button className="danger small" onClick={(e) => { e.stopPropagation(); revokeKey(u); }}>Revoke</button>
-                          </td>
-                        </tr>
-                        {expanded && (
-                          <tr className="expand-row">
-                            <td colSpan={3}>
-                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
-                                <label className="qlabel">Max Concurrent <input type="number" value={qForm.max_concurrent} onChange={e => setQForm({ ...qForm, max_concurrent: +e.target.value })} /></label>
-                                <label className="qlabel">Max Daily <input type="number" value={qForm.max_daily} onChange={e => setQForm({ ...qForm, max_daily: +e.target.value })} /></label>
-                                <label className="qlabel">Max Storage (bytes) <input type="number" value={qForm.max_storage_bytes} onChange={e => setQForm({ ...qForm, max_storage_bytes: +e.target.value })} /></label>
-                                <label className="qlabel">Max Timeout (sec) <input type="number" value={qForm.max_timeout_sec} onChange={e => setQForm({ ...qForm, max_timeout_sec: +e.target.value })} /></label>
-                              </div>
-                              <div className="row">
-                                <button onClick={saveQuota}>Save Quota</button>
-                                <button className="danger" onClick={resetQuota}>Reset</button>
-                              </div>
+              <>
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>User ID</th><th>Key</th><th style={{ textAlign: "center", width: 60 }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.slice(userPg * userPp, (userPg + 1) * userPp).map(u => {
+                      const hasKey = keys.find((k: any) => k.user_id === u);
+                      const expanded = selectedUser === u;
+                      return (
+                        <>
+                          <tr key={u} onClick={() => expanded ? setSelectedUser("") : loadQuota(u)} style={{ cursor: "pointer" }} className={expanded ? "expanded" : ""}>
+                            <td style={{ fontFamily: "monospace" }}>{u}</td>
+                            <td style={{ fontFamily: "monospace", color: "var(--muted)", fontSize: 11 }}>
+                              {hasKey ? hasKey.key : "—"}
+                            </td>
+                            <td style={{ textAlign: "center" }}>
+                              <button className="danger small" onClick={(e) => { e.stopPropagation(); revokeKey(u); }}>Revoke</button>
                             </td>
                           </tr>
-                        )}
-                      </>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          {expanded && (
+                            <tr className="expand-row">
+                              <td colSpan={3}>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                                  <label className="qlabel">Max Concurrent <input type="number" value={qForm.max_concurrent} onChange={e => setQForm({ ...qForm, max_concurrent: +e.target.value })} /></label>
+                                  <label className="qlabel">Max Daily <input type="number" value={qForm.max_daily} onChange={e => setQForm({ ...qForm, max_daily: +e.target.value })} /></label>
+                                  <label className="qlabel">Max Storage (bytes) <input type="number" value={qForm.max_storage_bytes} onChange={e => setQForm({ ...qForm, max_storage_bytes: +e.target.value })} /></label>
+                                  <label className="qlabel">Max Timeout (sec) <input type="number" value={qForm.max_timeout_sec} onChange={e => setQForm({ ...qForm, max_timeout_sec: +e.target.value })} /></label>
+                                </div>
+                                <div className="row">
+                                  <button onClick={saveQuota}>Save Quota</button>
+                                  <button className="danger" onClick={resetQuota}>Reset</button>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {Math.ceil(users.length / userPp) > 1 && (
+                  <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 4, marginTop: 16 }}>
+                    <span style={{ fontSize: 11, color: "var(--muted)", marginRight: 8 }}>
+                      {userPp}/page &middot; {users.length} total
+                    </span>
+                    <button className="small ghost" disabled={userPg === 0} onClick={() => setUserPg(userPg - 1)}>←</button>
+                    {Array.from({ length: Math.min(7, Math.ceil(users.length / userPp)) }, (_, i) => {
+                      const totalPages = Math.ceil(users.length / userPp);
+                      const start = Math.max(0, userPg - 3);
+                      const end = Math.min(totalPages, userPg + 4);
+                      const p = start + i;
+                      if (p >= end) return null;
+                      return (
+                        <button key={p} className={`small ${p === userPg ? "" : "ghost"}`} onClick={() => setUserPg(p)}>{p + 1}</button>
+                      );
+                    })}
+                    <button className="small ghost" disabled={userPg >= Math.ceil(users.length / userPp) - 1} onClick={() => setUserPg(userPg + 1)}>→</button>
+                    <input
+                      placeholder="page"
+                      value={userJump}
+                      onChange={e => setUserJump(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") { const n = parseInt(userJump) - 1; const max = Math.ceil(users.length / userPp); if (n >= 0 && n < max) { setUserPg(n); setUserJump(""); } } }}
+                      style={{ width: 44, fontSize: 11, padding: "3px 6px", marginLeft: 4, textAlign: "center" }}
+                    />
+                    <button className="small ghost" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => { const n = parseInt(userJump) - 1; const max = Math.ceil(users.length / userPp); if (n >= 0 && n < max) { setUserPg(n); setUserJump(""); } }}>Go</button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

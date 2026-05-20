@@ -4,7 +4,6 @@ import Login from "./components/Login";
 import Dashboard from "./components/Dashboard";
 import SubmitBuild from "./components/SubmitBuild";
 import BuildList from "./components/BuildList";
-import BuildDetail from "./components/BuildDetail";
 import AdminPanel from "./components/AdminPanel";
 import History from "./components/History";
 import "./App.css";
@@ -62,10 +61,7 @@ function App() {
           <SubmitBuild onSubmitted={(b) => { setSelected(b.id); setTab("builds"); }} />
         )}
         {tab === "builds" && (
-          <>
-            <BuildList selected={selected} onSelect={setSelected} />
-            {selected && <BuildDetail id={selected} onClose={() => setSelected(null)} />}
-          </>
+          <BuildList selected={selected} onSelect={setSelected} />
         )}
         {tab === "admin" && isAdmin && <AdminPanel />}
       </main>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { type Build, type BuildPage } from "../lib/api";
+import { type Build, type BuildPage, cancelBuild } from "../lib/api";
 import { getCached, setCached } from "../lib/useCache";
+import LogModal from "./LogModal";
 
 interface Props { selected: string | null; onSelect: (id: string) => void; }
 
@@ -30,6 +31,7 @@ export default function BuildList({ selected, onSelect }: Props) {
   const [pg, setPg] = useState(0);
   const [pp, sp] = useState(15);
   const [jump, setJump] = useState("");
+  const [logModal, setLogModal] = useState<Build | null>(null);
 
   async function load() {
     try {
@@ -71,6 +73,7 @@ export default function BuildList({ selected, onSelect }: Props) {
         <span style={{ width: 50, textAlign: "right" }}>Time</span>
         <span style={{ width: 50, textAlign: "right" }}>Cache</span>
         <span style={{ width: 80, textAlign: "right" }}>Status</span>
+        <span style={{ width: 140, textAlign: "right" }}>Actions</span>
       </div>
 
       {!page && <p style={{ color: "var(--muted)", fontSize: 12 }}>Loading...</p>}
@@ -85,6 +88,12 @@ export default function BuildList({ selected, onSelect }: Props) {
           <span style={{ fontSize: 11, color: "var(--muted)", width: 50, textAlign: "right" }}>{timeStr(b)}</span>
           <span style={{ fontSize: 11, color: "var(--muted)", width: 50, textAlign: "right" }}>{cachePct(b)}</span>
           <span className={`build-status ${statusC[b.status] || ""}`} style={{ width: 80, textAlign: "center" }}>{b.status}</span>
+          <span style={{ width: 140, textAlign: "right", display: "flex", gap: 4, justifyContent: "flex-end" }} onClick={(e) => e.stopPropagation()}>
+            <button className="small ghost" onClick={() => setLogModal(b)}>Logs</button>
+            {(b.status === "building" || b.status === "pending") && (
+              <button className="small danger" onClick={() => cancelBuild(b.id).then(load)}>Cancel</button>
+            )}
+          </span>
         </div>
       ))}
 
@@ -109,6 +118,7 @@ export default function BuildList({ selected, onSelect }: Props) {
           <button className="small ghost" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => { const n = parseInt(jump) - 1; if (n >= 0 && n < totalPages) { setPg(n); setJump(""); } }}>Go</button>
         </div>
       )}
+      {logModal && <LogModal build={logModal} onClose={() => setLogModal(null)} />}
     </div>
   );
 }
