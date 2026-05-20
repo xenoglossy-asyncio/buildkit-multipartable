@@ -1,0 +1,18 @@
+version: 0.1
+log:
+  level: debug
+  fields:
+    service: registry
+storage:
+  s3:
+    accesskey: admin
+    secretkey: password
+    region: us-east-1
+    regionendpoint: http://minio:9000
+    bucket: dtbuildkit-registry
+    secure: false
+    v4auth: true
+    chunksize: 5242880
+    rootdirectory: /
+http:
+  addr: :80

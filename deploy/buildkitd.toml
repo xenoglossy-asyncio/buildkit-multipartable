@@ -1,0 +1,3 @@
+[registry."registry:80"]
+  http = true
+  insecure = true
