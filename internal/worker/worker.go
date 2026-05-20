@@ -20,7 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/xenoglossy/dtbuildkit/internal/buildkit"
-	"github.com/xenoglossy/dtbuildkit/internal/store"
+	"github.com/xenoglossy/dtbuildkit/internal/domain"
 )
 
 // Worker polls the API server for builds and executes them.
@@ -113,7 +113,7 @@ func (w *Worker) addCacheKey(fp string) {
 
 func (w *Worker) sendHeartbeat(status string) {
 	cacheKeys := w.getCacheKeys()
-	body, _ := json.Marshal(store.Worker{
+	body, _ := json.Marshal(domain.Worker{
 		ID:        w.ID,
 		Hostname:  w.Hostname,
 		IP:        w.IP,
@@ -138,7 +138,7 @@ func (w *Worker) tryExecuteBuild(ctx context.Context) error {
 		return nil
 	}
 
-	var build store.Build
+	var build domain.Build
 	if err := json.NewDecoder(resp.Body).Decode(&build); err != nil {
 		return nil
 	}
@@ -153,13 +153,13 @@ func (w *Worker) tryExecuteBuild(ctx context.Context) error {
 
 	contextDir := filepath.Join(w.WorkDir, "builds", build.ID)
 	if err := os.MkdirAll(contextDir, 0755); err != nil {
-		w.completeBuild(build.ID, store.StatusFailed, err.Error(), "")
+		w.completeBuild(build.ID, domain.StatusFailed, err.Error(), "")
 		return nil
 	}
 	defer os.RemoveAll(contextDir)
 
 	if err := w.downloadContext(build.ID, contextDir); err != nil {
-		w.completeBuild(build.ID, store.StatusFailed, err.Error(), "")
+		w.completeBuild(build.ID, domain.StatusFailed, err.Error(), "")
 		return nil
 	}
 
@@ -172,7 +172,7 @@ func (w *Worker) tryExecuteBuild(ctx context.Context) error {
 		// Only write if the extracted context doesn't already have one
 		if _, statErr := os.Stat(dfPath); os.IsNotExist(statErr) {
 			if err := os.WriteFile(dfPath, []byte(build.Dockerfile), 0644); err != nil {
-				w.completeBuild(build.ID, store.StatusFailed, err.Error(), "")
+				w.completeBuild(build.ID, domain.StatusFailed, err.Error(), "")
 				return nil
 			}
 		}
@@ -180,15 +180,15 @@ func (w *Worker) tryExecuteBuild(ctx context.Context) error {
 	}
 
 	if err := w.executeBuild(ctx, &build, contextDir, dockerfile); err != nil {
-		w.completeBuild(build.ID, store.StatusFailed, err.Error(), "")
+		w.completeBuild(build.ID, domain.StatusFailed, err.Error(), "")
 	} else {
 		w.addCacheKey(build.Fingerprint)
-		w.completeBuild(build.ID, store.StatusSucceeded, "", "")
+		w.completeBuild(build.ID, domain.StatusSucceeded, "", "")
 	}
 	return nil
 }
 
-func (w *Worker) executeBuild(ctx context.Context, build *store.Build, contextDir, dockerfile string) error {
+func (w *Worker) executeBuild(ctx context.Context, build *domain.Build, contextDir, dockerfile string) error {
 	// Check if build was cancelled before we start
 	if w.isBuildCancelled(build.ID) {
 		return fmt.Errorf("build cancelled")
@@ -277,11 +277,11 @@ func (w *Worker) isBuildCancelled(buildID string) bool {
 		return false
 	}
 	defer resp.Body.Close()
-	var b store.Build
+	var b domain.Build
 	if json.NewDecoder(resp.Body).Decode(&b) != nil {
 		return false
 	}
-	return b.Status == store.StatusCancelled
+	return b.Status == domain.StatusCancelled
 }
 
 func (w *Worker) downloadContext(buildID, dest string) error {
@@ -300,10 +300,10 @@ func (w *Worker) sendLog(buildID, line string) {
 	w.doPost("/api/v1/builds/"+buildID+"/log", line)
 }
 
-func (w *Worker) completeBuild(buildID string, status store.Status, errMsg, digest string) {
+func (w *Worker) completeBuild(buildID string, status domain.Status, errMsg, digest string) {
 	// Use proper JSON encoding to escape special characters in error messages
 	type completeReq struct {
-		Status      store.Status `json:"status"`
+		Status      domain.Status `json:"status"`
 		Error       string       `json:"error,omitempty"`
 		ImageDigest string       `json:"image_digest,omitempty"`
 	}
