@@ -8,20 +8,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-Three-tier microservice architecture:
+Four-tier microservice architecture:
 
-1. **Client** (FastAPI + React SPA) — User-facing service on port 3000
-   - Auth, dashboard, admin panel, build submission proxy
+1. **Web** (nginx) — Static SPA + reverse proxy on port 3000
+   - Serves React production build
+   - Proxies `/api/*` to FastAPI, SSE passthrough (`proxy_buffering off`)
+   - SPA fallback routing (`try_files`)
+   - Immutable cache headers for `/assets/`
+
+2. **Client** (FastAPI) — API gateway on port 8100 (host) / 3000 (container)
+   - Auth, dashboard, admin panel, build submission
+   - Uploads build contexts directly to S3 (boto3)
+   - Sends JSON metadata to Go server (no file proxying)
    - Redis-cached stats (30s TTL, background refresh)
-   - Proxies build requests to Go server
 
-2. **Server** (Go + chi) — Internal build engine on port 8640
+3. **Server** (Go + chi) — Internal build engine on port 8640
    - Build CRUD, scheduling, worker management
    - SSE log streaming, Prometheus metrics
    - No auth layer (internal only)
 
-3. **Worker** (Go + buildkitd subprocess) — Build execution
+4. **Worker** (Go + buildkitd subprocess) — Build execution
    - Polls server for next build via consistent hash ring
+   - Downloads contexts from S3 (HTTP fallback via server)
    - Executes `buildctl build`, streams logs to server
    - Shares buildkitd daemon, registry-backed cache
 
@@ -29,6 +37,7 @@ Three-tier microservice architecture:
 - PostgreSQL 16 (builds, workers, quotas)
 - Redis 7 (stats cache)
 - Registry:2 (S3-backed OCI storage)
+- MinIO/S3 (build context storage)
 - BuildKit daemon (shared by all workers)
 
 ## Development Setup
@@ -53,7 +62,8 @@ docker compose down
 ```
 
 **Service URLs:**
-- Client (FastAPI + React): http://localhost:3000
+- Web (nginx SPA): http://localhost:3000
+- Client (FastAPI API): http://localhost:8100
 - Server (Go API): http://localhost:8640
 - Registry: http://localhost:5000
 - PostgreSQL: localhost:5432 (user: dtbuild, pass: dtbuild, db: dtbuildkit)
@@ -71,7 +81,7 @@ npm run build        # Production build
 npm run lint         # ESLint
 ```
 
-Frontend is served by FastAPI from `client/web/dist/` in production.
+Frontend is served by a dedicated nginx container (`web` service) in production. Built via `client/web/Dockerfile` (multi-stage: Node 22 → nginx:alpine). Nginx proxies `/api/*` requests to FastAPI.
 
 ### Backend Development
 
@@ -103,7 +113,7 @@ go test -v -run TestFromDockerfile ./internal/fingerprint  # Single test
 ```bash
 cd client
 uv sync              # Install dependencies
-uv run uvicorn main:app --reload --port 3000
+uv run uvicorn main:app --reload --port 8100
 
 # Environment variables
 export BUILD_SERVICE=http://localhost:8640
@@ -224,6 +234,10 @@ React SPA with tab-based navigation:
 - `BUILD_SERVICE` — Go server URL (default: `http://server:8640`)
 - `DTBUILD_ADMIN_KEY` — Admin key (must match server)
 - `REDIS_URL` — Redis connection (default: `redis://redis:6379`)
+- `S3_ENDPOINT` — MinIO/S3 endpoint for direct context upload
+- `S3_ACCESS_KEY` / `S3_SECRET_KEY` — S3 credentials
+- `S3_BUCKET` — Context bucket (default: `dtbuildkit`)
+- `S3_USE_SSL` — Use HTTPS for S3 (default: `false`)
 
 ## Testing
 
@@ -262,7 +276,7 @@ Test coverage:
 **Current deployment on this machine:**
 - Running via Docker Compose
 - 5 workers active
-- Client on port 3000, server on port 8640
+- Web (nginx) on port 3000, Client (FastAPI) on port 8100, Server on port 8640
 - PostgreSQL on 5432, Redis on 6379, Registry on 5000
 
 ## Key Design Decisions
@@ -278,3 +292,7 @@ Test coverage:
 **Folder upload:** Browser reads files recursively via `webkitGetAsEntry`, builds tar.gz in JS using `CompressionStream`, uploads to server.
 
 **Consistent hash scheduling:** Dockerfile fingerprint → hash ring → worker assignment. Workers with matching cache keys scored higher.
+
+**S3 as context bridge:** FastAPI uploads build contexts directly to S3 via boto3. Go server receives only JSON metadata (build_id + context_key). Workers download contexts from S3 directly (minio-go client with HTTP fallback via server's `/api/v1/blobs/{key}`). Eliminates double file transfer through the Go server.
+
+**Nginx frontend split:** Dedicated nginx container serves the React SPA and reverse proxies `/api/*` to FastAPI. Separates static asset serving from application logic. Enables browser caching with immutable asset headers and SSE passthrough with `proxy_buffering off`.

@@ -7,47 +7,52 @@ of container images per day — one (or more) per evaluation datapoint.
 ## Architecture
 
 ```
-┌─────────────────────────────────┐     HTTP      ┌──────────────────────────────┐
-│  Client (FastAPI + React) :3000 │──────────────▶│  Build Engine (Go) :8640      │
-│                                 │               │                              │
-│  POST /api/auth/login           │               │  POST /api/v1/builds         │
-│  GET  /api/v1/stats             │               │  POST /api/v1/builds/bulk    │
-│  GET  /api/v1/builds            │               │  GET  /api/v1/builds/next    │
-│  GET  /api/v1/admin/*           │               │  GET  /api/v1/builds/{id}    │
-│  /docs (OpenAPI)                │               │  GET  /api/v1/stats/*        │
-│  / (React SPA)                  │               │  POST /api/v1/workers/*      │
-└─────────────────────────────────┘               └──────────┬───────────────────┘
-                                                            │
-                          ┌─────────────────────────────────┼──────────────────────┐
-                          │                                 │                      │
-                    ┌─────▼─────┐                   ┌──────▼──────┐        ┌──────▼──────┐
-                    │  Worker 1 │                   │  Worker 2   │  ...   │  Worker N   │
-                    │ buildkitd │                   │ buildkitd   │        │ buildkitd   │
-                    └─────┬─────┘                   └──────┬──────┘        └──────┬──────┘
-                          │                                │                      │
-                          └────────────────────────────────┼──────────────────────┘
-                                                           │
-                                              ┌────────────▼───────────┐
-                                              │  Shared Registry :5000  │
-                                              │  (S3/MinIO backend)     │
-                                              │  images + layer cache   │
-                                              └────────────────────────┘
+┌──────────────────────┐  /api/*   ┌───────────────────────────┐  HTTP/JSON  ┌──────────────────────────────┐
+│  Web (nginx) :3000   │──────────▶│  Client (FastAPI) :8100   │───────────▶│  Build Engine (Go) :8640      │
+│                      │           │                           │            │                              │
+│  React SPA           │           │  POST /api/auth/login     │            │  POST /api/v1/builds         │
+│  Static assets       │           │  GET  /api/v1/stats       │            │  POST /api/v1/builds/bulk    │
+│  SPA fallback        │           │  GET  /api/v1/builds      │            │  GET  /api/v1/builds/next    │
+│  SSE passthrough     │           │  GET  /api/v1/admin/*     │            │  GET  /api/v1/builds/{id}    │
+│                      │           │  /docs (OpenAPI)          │            │  GET  /api/v1/stats/*        │
+└──────────────────────┘           └───────────┬───────────────┘            │  POST /api/v1/workers/*      │
+                                               │                            └──────────┬───────────────────┘
+                                          S3 upload                                    │
+                                               │                                       │
+                                   ┌───────────▼───────────┐              ┌────────────┼──────────────────────┐
+                                   │  MinIO/S3             │              │            │                      │
+                                   │  (context bucket)     │        ┌─────▼─────┐  ┌───▼─────────┐    ┌──────▼──────┐
+                                   └───────────▲───────────┘        │  Worker 1 │  │  Worker 2   │... │  Worker N   │
+                                               │                    │ buildkitd │  │ buildkitd   │    │ buildkitd   │
+                                          S3 download               └─────┬─────┘  └──────┬──────┘    └──────┬──────┘
+                                               │                          │               │                  │
+                                   ┌───────────┴──────┐                   └───────────────┼──────────────────┘
+                                   │                  │                                    │
+                             ┌─────▼─────┐            │                       ┌───────────▼────────────┐
+                             │  Worker * │            │                       │  Shared Registry :5000  │
+                             └───────────┘            │                       │  (S3/MinIO backend)     │
+                                                     │                       │  images + layer cache   │
+                                                     │                       └────────────────────────┘
+                                                     │
+                                                     └── (workers download contexts from S3)
 ```
 
 ### Microservice Split
 
 | Service | Port | Stack | Role |
 |---------|------|-------|------|
-| **Client** | 3000 | FastAPI (Python 3.13) + React (Vite) | User-facing: auth, dashboard, admin, build proxy |
+| **Web** | 3000 | nginx:alpine | SPA serving, reverse proxy `/api/*` to FastAPI, SSE passthrough |
+| **Client** | 8100 | FastAPI (Python 3.13) | Auth, dashboard, admin, S3 context upload, API proxy |
 | **Server** | 8640 | Go + chi | Build engine: CRUD, scheduling, worker management |
-| **Worker** | — | Go + buildkitd | Executes `buildctl build` via subprocess |
+| **Worker** | — | Go + buildkitd | Executes `buildctl build`, downloads context from S3 |
 | **Registry** | 5000 | distribution/registry:2 | OCI image storage, S3-backed |
 | **PostgreSQL** | 5432 | postgres:16 | Persistent storage (builds, workers, quotas) |
 | **Redis** | 6379 | redis:7 | Stats cache (30s TTL, refreshed by FastAPI) |
 
-The **Client** (FastAPI) handles all user concerns — login, dashboard, admin, OpenAPI docs.
-The **Server** (Go) is a pure internal build engine with no auth — only internal API endpoints.
-Workers talk directly to the Go server. FastAPI proxies user requests to Go and caches stats in Redis.
+The **Web** service (nginx) serves the React SPA and proxies all `/api/*` requests to FastAPI.
+The **Client** (FastAPI) handles auth, caching, and uploads contexts directly to S3 before sending
+JSON metadata to the Go server. The **Server** (Go) is a pure internal build engine with no auth.
+Workers download contexts from S3 and talk directly to the Go server.
 
 ## Project Structure
 
@@ -81,8 +86,11 @@ dtbuildkit/
 │   │   └── admin.py             # Admin: quotas, keys, health
 │   ├── services/
 │   │   ├── buildkit.py          # HTTP client to Go server
-│   │   └── cache.py             # Redis cache wrapper
+│   │   ├── cache.py             # Redis cache wrapper
+│   │   └── s3.py                # S3/MinIO client for context upload
 │   └── web/                     # React frontend
+│       ├── Dockerfile           # Multi-stage: Node 22 → nginx:alpine
+│       ├── nginx.conf           # Reverse proxy + SPA routing
 │       └── src/
 │           ├── App.tsx          # Root with tabs (Dashboard|History|Submit|Builds|Admin)
 │           ├── components/
@@ -139,8 +147,9 @@ go build -o dtbuild ./cmd/dtbuild
 ./dtbuild status <build-id>
 ./dtbuild logs <build-id>
 
-# 7. OpenAPI docs
+# 7. OpenAPI docs (proxied through nginx)
 open http://localhost:3000/docs
+# Or direct: http://localhost:8100/docs
 
 # 8. Prometheus metrics
 curl http://localhost:8640/metrics
@@ -187,7 +196,7 @@ curl http://localhost:8640/metrics
 | `GET` | `/metrics` | Prometheus |
 | `GET` | `/healthz` | Health check |
 
-### FastAPI Client (`:3000` — user-facing, OpenAPI at `/docs`)
+### FastAPI Client (`:8100` direct, proxied via nginx `:3000` — OpenAPI at `/docs`)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -245,6 +254,11 @@ dtbuild-server \
 | `BUILD_SERVICE` | `http://server:8640` | Go server URL |
 | `DTBUILD_ADMIN_KEY` | `fucking-admin-dtbuildkit` | Admin key |
 | `REDIS_URL` | `redis://redis:6379` | Redis connection |
+| `S3_ENDPOINT` | — | MinIO/S3 endpoint for context upload |
+| `S3_ACCESS_KEY` | — | S3 access key |
+| `S3_SECRET_KEY` | — | S3 secret key |
+| `S3_BUCKET` | `dtbuildkit` | Context bucket |
+| `S3_USE_SSL` | `false` | Use HTTPS for S3 |
 
 ## Key Design Decisions
 
@@ -264,6 +278,16 @@ server broadcasts to SSE subscribers. Completed build logs include proper `\n` s
 **Folder upload.** Browser reads all files recursively via `webkitGetAsEntry`,
 builds a tar.gz in JS using `CompressionStream`, uploads to the server.
 
+**S3 as context bridge.** FastAPI uploads build contexts to S3 via boto3, then
+sends only JSON metadata (build_id + context_key) to the Go server. Workers
+download contexts directly from S3 using minio-go (with HTTP fallback via the
+server's `/api/v1/blobs/{key}` endpoint). Eliminates double file transfer.
+
+**Nginx reverse proxy.** A dedicated nginx container (`web` service) serves the
+production React SPA and proxies `/api/*` to FastAPI. Separates static file
+serving from application logic. Enables aggressive browser caching for `/assets/`
+and supports SSE streams with `proxy_buffering off`.
+
 ## Operational Notes
 
 ### Build Lifecycle
@@ -281,4 +305,5 @@ builds a tar.gz in JS using `CompressionStream`, uploads to the server.
 | High pending queue | HPA scales worker pods |
 | Docker Hub rate limiting | Add registry backend replicas (more IPs) |
 | Stats query latency | Redis cache (30s TTL) |
-| Frontend load | Static SPA + API caching |
+| Context upload throughput | S3 direct upload (no proxy bottleneck) |
+| Frontend load | Static SPA via nginx + API caching |
