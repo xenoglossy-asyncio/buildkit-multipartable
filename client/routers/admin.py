@@ -27,6 +27,16 @@ class KeyInput(BaseModel):
     user_id: str
 
 
+@router.get("/stats")
+async def stats(request: Request, _: str = Header(default="", alias="x-admin-key")):
+    try:
+        resp = await buildkit.build_client(request).get("/api/v1/admin/stats")
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @router.get("/health")
 async def health(request: Request, _: str = Header(default="", alias="x-admin-key")):
     try:

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-interface Daily { days: number; counts: number[]; }
+interface Daily { days: number; counts: number[]; succeeded: number[]; failed: number[]; labels: string[]; }
 interface UserStat { user_id: string; count: number; succeeded: number; failed: number; avg_time_sec: number; cache_rate: number; success_rate: number; }
 
 const RANGES: [string, number][] = [["7D", 7], ["14D", 14], ["30D", 30], ["90D", 90]];
@@ -72,15 +72,32 @@ export default function History() {
 
       {/* Daily chart */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <h2>Daily Builds (Status)</h2>
+        <h2>Daily Builds</h2>
         {daily && daily.counts.length > 0 ? (
-          <div className="bar-chart" style={{ height: 120 }}>
-            {daily.counts.map((h: number, i: number) => (
-              <div key={i} className="bar" style={{
-                height: `${(h / maxD) * 100}%`,
-                background: i >= daily.counts.length - 1 ? "var(--primary)" : "var(--primary-dim)",
-              }} title={`Day ${daily.counts.length - i}: ${h} builds`} />
-            ))}
+          <div>
+            <div className="bar-chart" style={{ height: 120 }}>
+              {daily.counts.map((total: number, i: number) => {
+                const ok = daily.succeeded?.[i] || 0;
+                const fail = daily.failed?.[i] || 0;
+                const pctOk = total > 0 ? (ok / total) * 100 : 0;
+                const pctFail = total > 0 ? (fail / total) * 100 : 0;
+                return (
+                  <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%", alignItems: "center" }}>
+                    <div style={{ width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", height: `${(total / maxD) * 100}%` }}>
+                      {fail > 0 && <div style={{ height: `${pctFail}%`, background: "var(--red)", borderRadius: "1px 1px 0 0", minHeight: total > 0 ? 2 : 0 }} />}
+                      {ok > 0 && <div style={{ height: `${pctOk}%`, background: "var(--green)", borderRadius: fail === 0 ? "2px 2px 0 0" : "0", minHeight: 2 }} />}
+                    </div>
+                    <span style={{ fontSize: 9, color: "var(--muted)", marginTop: 4, transform: "rotate(-45deg)", transformOrigin: "top left", whiteSpace: "nowrap" }}>
+                      {daily.labels?.[i] || ""}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: 16, marginTop: 20, fontSize: 10, color: "var(--muted)" }}>
+              <span><span style={{ color: "var(--green)" }}>■</span> Succeeded</span>
+              <span><span style={{ color: "var(--red)" }}>■</span> Failed</span>
+            </div>
           </div>
         ) : <p style={{ color: "var(--muted)", fontSize: 12 }}>No data</p>}
       </div>

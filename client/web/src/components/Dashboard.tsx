@@ -42,13 +42,13 @@ export default function Dashboard() {
       <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Dashboard</div>
 
       <div className="metrics-grid">
-        <StatCard label="Today" value={`${stats.total_builds}`} sub={`↑${stats.succeeded} ↓${stats.failed}`} />
+        <StatCard label="Today" value={`${stats.total_builds}`} sub={`${stats.succeeded} ok / ${stats.failed} fail`} />
         <StatCard label="Success Rate" value={`${stats.success_rate?.toFixed(1)}%`}
           cls={stats.success_rate >= 90 ? "green" : stats.success_rate >= 50 ? "yellow" : ""} sub={`${stats.succeeded} ok / ${stats.failed} fail`} />
         <StatCard label="Avg Build Time" value={`${avg?.avg_build_sec?.toFixed(1) || "—"}s`} />
         <StatCard label="Cache Hit Rate" value={`${avg?.cache_hit_rate?.toFixed(1) || "0"}%`}
           cls={(avg?.cache_hit_rate || 0) > 50 ? "green" : "yellow"} />
-        <StatCard label="Workers" value={`${stats.active_workers}`} sub="active / total" />
+        <StatCard label="Workers" value={`${stats.active_workers}`} sub="active" />
         <StatCard label="Pending" value={`${stats.pending}`}
           cls={stats.pending > 10 ? "yellow" : ""} sub={`Queue: ${stats.queue_depth}`} />
       </div>

@@ -258,16 +258,32 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	today := now.Truncate(24 * time.Hour)
 	counts := make([]int, days)
+	succeeded := make([]int, days)
+	failed := make([]int, days)
+	labels := make([]string, days)
 	for _, b := range builds {
 		age := today.Sub(b.CreatedAt.Truncate(24 * time.Hour))
 		day := int(age.Hours() / 24)
 		if day >= 0 && day < days {
-			counts[days-1-day]++
+			idx := days - 1 - day
+			counts[idx]++
+			if b.Status == domain.StatusSucceeded {
+				succeeded[idx]++
+			} else if b.Status == domain.StatusFailed || b.Status == domain.StatusTimedOut {
+				failed[idx]++
+			}
 		}
 	}
+	for i := 0; i < days; i++ {
+		d := today.Add(-time.Duration(days-1-i) * 24 * time.Hour)
+		labels[i] = d.Format("1/2")
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"days":   days,
-		"counts": counts,
+		"days":      days,
+		"counts":    counts,
+		"succeeded": succeeded,
+		"failed":    failed,
+		"labels":    labels,
 	})
 }
 

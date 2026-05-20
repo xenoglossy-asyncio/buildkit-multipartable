@@ -56,11 +56,11 @@ export default function BuildList({ selected, onSelect }: Props) {
 
       {/* Column headers */}
       <div className="build-row" style={{ color: "var(--muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: ".5px", cursor: "default", padding: "4px 8px" }}>
-        <span className="build-id">ID</span>
-        <span className="build-tag">Tag</span>
+        <span style={{ width: 70, fontFamily: "monospace" }}>ID</span>
+        <span style={{ flex: 1 }}>Tag</span>
         <span style={{ width: 50, textAlign: "right" }}>Time</span>
-        <span style={{ width: 45, textAlign: "right" }}>Cache</span>
-        <span style={{ width: 70, textAlign: "right" }}>Status</span>
+        <span style={{ width: 50, textAlign: "right" }}>Cache</span>
+        <span style={{ width: 80, textAlign: "right" }}>Status</span>
       </div>
 
       {!page && <p style={{ color: "var(--muted)", fontSize: 12 }}>Loading...</p>}
@@ -69,11 +69,11 @@ export default function BuildList({ selected, onSelect }: Props) {
       {page?.builds.map(b => (
         <div key={b.id} className={`build-row ${selected === b.id ? "selected" : ""}`}
           onClick={() => onSelect(b.id)}>
-          <span className="build-id" title={b.id}>{b.id.substring(0, 8)}</span>
-          <span className="build-tag" title={b.image_tag}>{b.image_tag || "—"}</span>
+          <span className="build-id" title={b.id} style={{ width: 70 }}>{b.id.substring(0, 8)}</span>
+          <span className="build-tag" title={b.image_tag} style={{ flex: 1 }}>{b.image_tag || "—"}</span>
           <span style={{ fontSize: 11, color: "var(--muted)", width: 50, textAlign: "right" }}>{timeStr(b)}</span>
-          <span style={{ fontSize: 11, color: "var(--muted)", width: 45, textAlign: "right" }}>{cachePct(b)}</span>
-          <span className={`build-status ${statusC[b.status] || ""}`}>{b.status}</span>
+          <span style={{ fontSize: 11, color: "var(--muted)", width: 50, textAlign: "right" }}>{cachePct(b)}</span>
+          <span className={`build-status ${statusC[b.status] || ""}`} style={{ width: 80, textAlign: "center" }}>{b.status}</span>
         </div>
       ))}
 
@@ -92,14 +92,10 @@ export default function BuildList({ selected, onSelect }: Props) {
             placeholder="page"
             value={jump}
             onChange={e => setJump(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === "Enter") {
-                const n = parseInt(jump) - 1;
-                if (n >= 0 && n < totalPages) { setPg(n); setJump(""); }
-              }
-            }}
-            style={{ width: 50, fontSize: 11, padding: "3px 6px", marginLeft: 8, textAlign: "center" }}
+            onKeyDown={e => { if (e.key === "Enter") { const n = parseInt(jump) - 1; if (n >= 0 && n < totalPages) { setPg(n); setJump(""); } } }}
+            style={{ width: 44, fontSize: 11, padding: "3px 6px", marginLeft: 4, textAlign: "center" }}
           />
+          <button className="small ghost" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => { const n = parseInt(jump) - 1; if (n >= 0 && n < totalPages) { setPg(n); setJump(""); } }}>Go</button>
         </div>
       )}
     </div>
