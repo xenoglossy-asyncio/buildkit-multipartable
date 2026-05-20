@@ -29,13 +29,16 @@ export default function AdminPanel() {
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
-    api("GET", "/health").then(setHealth).catch(() => {});
-    api("GET", "/stats").then(setStats).catch(() => {});
-    api("GET", "/keys").then(k => { setKeys(k || []); setUsers((k || []).map((x: any) => x.user_id)); }).catch(() => {});
-    const t = setInterval(() => {
-      api("GET", "/health").then(setHealth).catch(() => {});
-      api("GET", "/stats").then(setStats).catch(() => {});
-    }, 10000);
+    const cached = JSON.parse(sessionStorage.getItem("dtb_admin") || "null");
+    if (cached) { setHealth(cached.h); setStats(cached.s); setKeys(cached.k || []); setUsers((cached.k || []).map((x: any) => x.user_id)); }
+
+    const load = () => Promise.all([api("GET", "/health"), api("GET", "/stats"), api("GET", "/keys")])
+      .then(([h, s, k]) => {
+        sessionStorage.setItem("dtb_admin", JSON.stringify({ h, s, k }));
+        setHealth(h); setStats(s); setKeys(k || []); setUsers((k || []).map((x: any) => x.user_id));
+      }).catch(() => {});
+    load();
+    const t = setInterval(load, 10000);
     return () => clearInterval(t);
   }, []);
 
