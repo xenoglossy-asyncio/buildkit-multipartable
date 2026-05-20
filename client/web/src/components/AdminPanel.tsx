@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getCached, setCached } from "../lib/useCache";
 
 const BASE = "/api/v1/admin";
 const H = (): Record<string, string> => {
@@ -112,78 +113,68 @@ export default function AdminPanel() {
       )}
 
       {page === "users" && (
-        <div style={{ display: "grid", gridTemplateColumns: "250px 1fr", gap: 16 }}>
-          {/* User list sidebar */}
-          <div className="card" style={{ height: "fit-content" }}>
-            <h2>Users ({users.length})</h2>
-            {users.map(u => (
-              <div key={u} onClick={() => loadQuota(u)}
-                style={{ padding: "8px 10px", cursor: "pointer", borderRadius: 6, marginBottom: 2, fontFamily: "monospace", fontSize: 12, background: selectedUser === u ? "var(--primary-dim)" : "transparent", color: selectedUser === u ? "var(--primary)" : "var(--text)" }}>
-                {u}
-              </div>
-            ))}
-            {users.length === 0 && <p style={{ color: "var(--muted)", fontSize: 12 }}>No users</p>}
-          </div>
-
-          {/* User detail */}
-          <div>
-            {selectedUser && (
-              <div>
-                {/* Quota card */}
-                <div className="card" style={{ marginBottom: 12 }}>
-                  <h2>Quota: {selectedUser}</h2>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-                    <label className="qlabel">Max Concurrent <input type="number" value={qForm.max_concurrent} onChange={e => setQForm({ ...qForm, max_concurrent: +e.target.value })} /></label>
-                    <label className="qlabel">Max Daily <input type="number" value={qForm.max_daily} onChange={e => setQForm({ ...qForm, max_daily: +e.target.value })} /></label>
-                    <label className="qlabel">Max Storage <input type="number" value={qForm.max_storage_bytes} onChange={e => setQForm({ ...qForm, max_storage_bytes: +e.target.value })} /></label>
-                    <label className="qlabel">Max Timeout (s) <input type="number" value={qForm.max_timeout_sec} onChange={e => setQForm({ ...qForm, max_timeout_sec: +e.target.value })} /></label>
-                  </div>
-                  <div className="row">
-                    <button onClick={saveQuota}>Save</button>
-                    <button className="danger" onClick={resetQuota}>Reset</button>
-                  </div>
-                </div>
-
-                {/* API Key card */}
-                <div className="card" style={{ marginBottom: 12 }}>
-                  <h2>API Key</h2>
-                  {keys.find((k: any) => k.user_id === selectedUser) ? (
-                    <div className="row">
-                      <code style={{ flex: 1, fontFamily: "monospace", fontSize: 12, color: "var(--muted)" }}>
-                        {keys.find((k: any) => k.user_id === selectedUser)?.key}
-                      </code>
-                      <button className="danger small" onClick={() => revokeKey(selectedUser)}>Revoke</button>
-                    </div>
-                  ) : (
-                    <div>
-                      <p style={{ color: "var(--muted)", fontSize: 12, marginBottom: 8 }}>No key for this user.</p>
-                      <button onClick={() => { setNewKeyUser(selectedUser); createKey(); }}>Create Key</button>
-                      {newKeyVal && (
-                        <div style={{ background: "var(--bg)", border: "1px solid var(--green)", borderRadius: 6, padding: 8, marginTop: 8, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
-                          {newKeyVal}
-                          <button className="small" onClick={() => { navigator.clipboard.writeText(newKeyVal); setMsg("Copied!"); }} style={{ marginLeft: 8 }}>Copy</button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+        <div>
+          {/* Create new user bar */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="row">
+              <input placeholder="New User ID" value={newKeyUser} onChange={e => setNewKeyUser(e.target.value)} style={{ flex: 1 }} />
+              <button onClick={createKey}>Create User + Key</button>
+            </div>
+            {newKeyVal && (
+              <div style={{ background: "var(--bg)", border: "1px solid var(--green)", borderRadius: 8, padding: 10, marginTop: 8, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+                {newKeyVal}
+                <button className="small" onClick={() => { navigator.clipboard.writeText(newKeyVal); setMsg("Copied!"); }} style={{ marginLeft: 8 }}>Copy</button>
               </div>
             )}
+          </div>
 
-            {/* Create new user */}
-            <div className="card">
-              <h2>Create New User</h2>
-              <div className="row" style={{ marginBottom: 12 }}>
-                <input placeholder="User ID" value={newKeyUser} onChange={e => setNewKeyUser(e.target.value)} style={{ flex: 1 }} />
-                <button onClick={createKey}>Create Key</button>
-              </div>
-              {newKeyVal && (
-                <div style={{ background: "var(--bg)", border: "1px solid var(--green)", borderRadius: 8, padding: 10, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
-                  {newKeyVal}
-                  <button className="small" onClick={() => { navigator.clipboard.writeText(newKeyVal); setMsg("Copied!"); }} style={{ marginLeft: 8 }}>Copy</button>
-                </div>
-              )}
-            </div>
+          {/* User table */}
+          <div className="card">
+            <h2>Users ({users.length})</h2>
+            {users.length === 0 ? <p style={{ color: "var(--muted)", fontSize: 12 }}>No registered users yet.</p> : (
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>User ID</th><th>Key</th><th style={{ textAlign: "center", width: 60 }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map(u => {
+                    const hasKey = keys.find((k: any) => k.user_id === u);
+                    const expanded = selectedUser === u;
+                    return (
+                      <>
+                        <tr key={u} onClick={() => expanded ? setSelectedUser("") : loadQuota(u)} style={{ cursor: "pointer" }} className={expanded ? "expanded" : ""}>
+                          <td style={{ fontFamily: "monospace" }}>{u}</td>
+                          <td style={{ fontFamily: "monospace", color: "var(--muted)", fontSize: 11 }}>
+                            {hasKey ? hasKey.key : "—"}
+                          </td>
+                          <td style={{ textAlign: "center" }}>
+                            <button className="danger small" onClick={(e) => { e.stopPropagation(); revokeKey(u); }}>Revoke</button>
+                          </td>
+                        </tr>
+                        {expanded && (
+                          <tr className="expand-row">
+                            <td colSpan={3}>
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                                <label className="qlabel">Max Concurrent <input type="number" value={qForm.max_concurrent} onChange={e => setQForm({ ...qForm, max_concurrent: +e.target.value })} /></label>
+                                <label className="qlabel">Max Daily <input type="number" value={qForm.max_daily} onChange={e => setQForm({ ...qForm, max_daily: +e.target.value })} /></label>
+                                <label className="qlabel">Max Storage (bytes) <input type="number" value={qForm.max_storage_bytes} onChange={e => setQForm({ ...qForm, max_storage_bytes: +e.target.value })} /></label>
+                                <label className="qlabel">Max Timeout (sec) <input type="number" value={qForm.max_timeout_sec} onChange={e => setQForm({ ...qForm, max_timeout_sec: +e.target.value })} /></label>
+                              </div>
+                              <div className="row">
+                                <button onClick={saveQuota}>Save Quota</button>
+                                <button className="danger" onClick={resetQuota}>Reset</button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}

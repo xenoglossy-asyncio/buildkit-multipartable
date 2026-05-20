@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getCached, setCached } from "../lib/useCache";
 
 interface Stats { total_builds: number; succeeded: number; failed: number; success_rate: number; pending: number; active_workers: number; queue_depth: number; }
 interface Averages { avg_build_sec: number; cache_hit_rate: number; }
@@ -25,11 +26,17 @@ export default function Dashboard() {
   const [running, setRunning] = useState<RunningBuild[]>([]);
 
   useEffect(() => {
+    // Show cached data instantly
+    const cached = getCached("dashboard", 10000);
+    if (cached) { setStats(cached.s); setAvg(cached.a); setUsers(cached.u); setRunning(cached.r); }
+
     const load = async () => {
       const [s, a, u, r] = await Promise.all([
         j("/api/v1/stats"), j("/api/v1/stats/averages"),
         j("/api/v1/stats/users?days=30"), j("/api/v1/stats/running"),
       ]);
+      const data = { s, a, u: u || [], r: r || [] };
+      setCached("dashboard", data);
       setStats(s); setAvg(a); setUsers(u || []); setRunning(r || []);
     };
     load(); const t = setInterval(load, 30000); return () => clearInterval(t);

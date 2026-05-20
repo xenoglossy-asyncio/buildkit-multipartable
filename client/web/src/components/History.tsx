@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getCached, setCached } from "../lib/useCache";
 
 interface Daily { days: number; counts: number[]; succeeded: number[]; failed: number[]; labels: string[]; }
 interface UserStat { user_id: string; count: number; succeeded: number; failed: number; avg_time_sec: number; cache_rate: number; success_rate: number; }
@@ -18,15 +19,25 @@ export default function History() {
   const d = customDays || days;
 
   useEffect(() => {
+    const key = `history-${d}`;
+    const cached = getCached(key, 10000);
+    if (cached) { setDaily(cached.dl); setUsers(cached.us); setStats(cached.st); setAvg(cached.av); }
+
     Promise.all([
       j(`/api/v1/stats/daily?days=${d}`),
       j(`/api/v1/stats/users?days=${d}`),
       j("/api/v1/stats"),
       j("/api/v1/stats/averages"),
-    ]).then(([dl, us, st, av]) => { setDaily(dl); setUsers(us || []); setStats(st); setAvg(av); });
+    ]).then(([dl, us, st, av]) => {
+      setCached(key, { dl, us, st, av });
+      setDaily(dl); setUsers(us || []); setStats(st); setAvg(av);
+    });
   }, [d]);
 
-  const maxD = daily ? Math.max(1, ...daily.counts) : 1;
+  // Responsive aggregation: ≤14d show all, >14d show weekly
+  const agg = d <= 14 ? 1 : Math.ceil(d / 14);
+  const dl = daily;
+  const maxD = dl ? Math.max(1, ...dl.counts) : 1;
   const totalBuilds = daily?.counts.reduce((a: number, b: number) => a + b, 0) || 0;
   const avgPerDay = totalBuilds > 0 ? (totalBuilds / d).toFixed(1) : "0";
 
@@ -72,31 +83,37 @@ export default function History() {
 
       {/* Daily chart */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <h2>Daily Builds</h2>
-        {daily && daily.counts.length > 0 ? (
+        <h2>{d <= 14 ? "Daily" : "Weekly"} Builds</h2>
+        {dl && dl.counts.length > 0 ? (
           <div>
-            <div className="bar-chart" style={{ height: 120 }}>
-              {daily.counts.map((total: number, i: number) => {
-                const ok = daily.succeeded?.[i] || 0;
-                const fail = daily.failed?.[i] || 0;
-                const pctOk = total > 0 ? (ok / total) * 100 : 0;
-                const pctFail = total > 0 ? (fail / total) * 100 : 0;
+            <div className="bar-chart" style={{ height: 140, alignItems: "flex-end", marginBottom: 8 }}>
+              {dl.counts.filter((_: number, i: number) => i % agg === 0).map((total: number, i: number) => {
+                const idx = i * agg;
+                // Aggregate next 'agg' days
+                let ok = 0, fail = 0;
+                for (let j = idx; j < Math.min(idx + agg, dl.counts.length); j++) {
+                  ok += dl.succeeded?.[j] || 0;
+                  fail += dl.failed?.[j] || 0;
+                }
+                const sum = ok + fail;
+                const pctOk = sum > 0 ? (ok / sum) * 100 : 0;
+                const pctFail = sum > 0 ? (fail / sum) * 100 : 0;
                 return (
-                  <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%", alignItems: "center" }}>
-                    <div style={{ width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", height: `${(total / maxD) * 100}%` }}>
-                      {fail > 0 && <div style={{ height: `${pctFail}%`, background: "var(--red)", borderRadius: "1px 1px 0 0", minHeight: total > 0 ? 2 : 0 }} />}
-                      {ok > 0 && <div style={{ height: `${pctOk}%`, background: "var(--green)", borderRadius: fail === 0 ? "2px 2px 0 0" : "0", minHeight: 2 }} />}
+                  <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%", alignItems: "center", minWidth: agg === 1 ? 0 : 30 }}>
+                    <div style={{ width: Math.max(8, 90 / (dl.counts.length / agg)), display: "flex", flexDirection: "column", justifyContent: "flex-end", height: `${Math.max(2, (sum / maxD) * 100)}%` }}>
+                      {fail > 0 && <div style={{ height: `${pctFail}%`, background: "var(--red)", borderRadius: "1px 1px 0 0", minHeight: 2, transition: "height .3s" }} />}
+                      {ok > 0 && <div style={{ height: `${pctOk}%`, background: "var(--green)", borderRadius: fail === 0 ? "2px 2px 0 0" : "0", minHeight: 2, transition: "height .3s" }} />}
                     </div>
-                    <span style={{ fontSize: 9, color: "var(--muted)", marginTop: 4, transform: "rotate(-45deg)", transformOrigin: "top left", whiteSpace: "nowrap" }}>
-                      {daily.labels?.[i] || ""}
+                    <span style={{ fontSize: 9, color: "var(--muted)", marginTop: 4, textAlign: "center" }}>
+                      {dl.labels?.[idx] || ""}{agg > 1 && dl.labels?.[Math.min(idx + agg - 1, dl.counts.length - 1)] ? `-${dl.labels[Math.min(idx + agg - 1, dl.counts.length - 1)]}` : ""}
                     </span>
                   </div>
                 );
               })}
             </div>
-            <div style={{ display: "flex", gap: 16, marginTop: 20, fontSize: 10, color: "var(--muted)" }}>
-              <span><span style={{ color: "var(--green)" }}>■</span> Succeeded</span>
-              <span><span style={{ color: "var(--red)" }}>■</span> Failed</span>
+            <div style={{ display: "flex", gap: 16, fontSize: 10, color: "var(--muted)" }}>
+              <span><span style={{ color: "var(--green)" }}>■</span> OK</span>
+              <span><span style={{ color: "var(--red)" }}>■</span> Fail</span>
             </div>
           </div>
         ) : <p style={{ color: "var(--muted)", fontSize: 12 }}>No data</p>}

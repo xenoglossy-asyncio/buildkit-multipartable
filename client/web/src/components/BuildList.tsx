@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { type Build, type BuildPage } from "../lib/api";
+import { getCached, setCached } from "../lib/useCache";
 
 interface Props { selected: string | null; onSelect: (id: string) => void; }
 
@@ -30,12 +31,15 @@ export default function BuildList({ selected, onSelect }: Props) {
 
   async function load() {
     try {
+      const cacheKey = `builds-${pp}-${pg}`;
+      const cached = getCached(cacheKey, 3000);
+      if (cached) { setPage(cached); }
       const r = await fetch(`/api/v1/builds?limit=${pp}&offset=${pg * pp}`);
-      if (r.ok) setPage(await r.json());
+      if (r.ok) { const data = await r.json(); setCached(cacheKey, data); setPage(data); }
     } catch {}
   }
 
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [pg, pp]);
+  useEffect(() => { setPage(null); load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [pg, pp]);
 
   const totalPages = page ? Math.ceil(page.total / pp) : 0;
 
