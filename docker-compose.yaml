@@ -98,9 +98,70 @@ services:
       - registry
     restart: unless-stopped
 
+
+  worker-3:
+    build: .
+    container_name: dtbuild-worker-3
+    command:
+      - "/app/dtbuild-worker"
+      - "--server=http://server:8640"
+      - "--buildkit=unix:///run/buildkit/buildkitd.sock"
+      - "--workdir=/data/worker-3"
+      - "--cache-registry=registry:80/cache"
+    volumes:
+      - worker-data-3:/data
+      - buildkit-sock:/run/buildkit
+    network_mode: "service:buildkitd"
+    depends_on:
+      - server
+      - buildkitd
+      - registry
+    restart: unless-stopped
+
+  worker-4:
+    build: .
+    container_name: dtbuild-worker-4
+    command:
+      - "/app/dtbuild-worker"
+      - "--server=http://server:8640"
+      - "--buildkit=unix:///run/buildkit/buildkitd.sock"
+      - "--workdir=/data/worker-4"
+      - "--cache-registry=registry:80/cache"
+    volumes:
+      - worker-data-4:/data
+      - buildkit-sock:/run/buildkit
+    network_mode: "service:buildkitd"
+    depends_on:
+      - server
+      - buildkitd
+      - registry
+    restart: unless-stopped
+
+  worker-5:
+    build: .
+    container_name: dtbuild-worker-5
+    command:
+      - "/app/dtbuild-worker"
+      - "--server=http://server:8640"
+      - "--buildkit=unix:///run/buildkit/buildkitd.sock"
+      - "--workdir=/data/worker-5"
+      - "--cache-registry=registry:80/cache"
+    volumes:
+      - worker-data-5:/data
+      - buildkit-sock:/run/buildkit
+    network_mode: "service:buildkitd"
+    depends_on:
+      - server
+      - buildkitd
+      - registry
+    restart: unless-stopped
+
 volumes:
   buildkit-data:
   buildkit-sock:
   server-data:
   worker-data:
   worker-data-2:
+  worker-data-3:
+  worker-data-4:
+  worker-data-5:

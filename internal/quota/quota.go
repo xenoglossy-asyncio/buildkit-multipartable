@@ -18,7 +18,7 @@ type Manager struct {
 	concurrent map[string]int32       // userID -> current building count
 	dailyCount map[string]int32       // userID -> builds today
 	dailyReset map[string]int64       // userID -> unix day of last reset
-	storageUse map[string]atomic.Int64 // userID -> context bytes used
+	storageUse map[string]*atomic.Int64 // userID -> context bytes used
 }
 
 // NewManager creates a quota manager with per-user limits.
@@ -28,7 +28,7 @@ func NewManager(defaults map[string]*domain.Quota) *Manager {
 		concurrent: make(map[string]int32),
 		dailyCount: make(map[string]int32),
 		dailyReset: make(map[string]int64),
-		storageUse: make(map[string]atomic.Int64),
+		storageUse: make(map[string]*atomic.Int64),
 	}
 	if m.quotas == nil {
 		m.quotas = make(map[string]*domain.Quota)
@@ -98,11 +98,13 @@ func (m *Manager) RecordBuild(userID string, contextBytes int64) {
 	m.resetDailyIfNeeded(userID)
 	m.mu.Lock()
 	m.dailyCount[userID]++
-	m.mu.Unlock()
 	if contextBytes > 0 {
-		s, _ := m.storageUse[userID]
-		s.Add(contextBytes)
+		if _, ok := m.storageUse[userID]; !ok {
+			m.storageUse[userID] = new(atomic.Int64)
+		}
+		m.storageUse[userID].Add(contextBytes)
 	}
+	m.mu.Unlock()
 }
 
 // CheckStorage checks if the user has exceeded storage quota.
@@ -111,8 +113,14 @@ func (m *Manager) CheckStorage(userID string, additionalBytes int64) bool {
 	if q.MaxStorageBytes <= 0 {
 		return true // unlimited
 	}
-	s, _ := m.storageUse[userID]
-	return s.Load()+additionalBytes <= q.MaxStorageBytes
+	m.mu.RLock()
+	v, ok := m.storageUse[userID]
+	var used int64
+	if ok {
+		used = v.Load()
+	}
+	m.mu.RUnlock()
+	return used+additionalBytes <= q.MaxStorageBytes
 }
 
 // SetQuota updates the quota for a user.

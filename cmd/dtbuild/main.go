@@ -346,8 +346,8 @@ func tarGz(dir string, w io.Writer) error {
 			if err != nil {
 				return err
 			}
-			_, copyErr := io.Copy(tw, f); f.Close(); if copyErr != nil { return copyErr }
-			io.Copy(tw, f)
+			if _, err := io.Copy(tw, f); err != nil { f.Close(); return err }
+			f.Close()
 		}
 		return nil
 	})

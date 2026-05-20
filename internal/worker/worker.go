@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -60,6 +61,8 @@ func (w *Worker) Run(ctx context.Context) error {
 		return fmt.Errorf("buildkitd check: %w", err)
 	}
 
+	var busy atomic.Bool
+
 	heartbeatTicker := time.NewTicker(5 * time.Second)
 	defer heartbeatTicker.Stop()
 
@@ -71,11 +74,22 @@ func (w *Worker) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-heartbeatTicker.C:
-			w.sendHeartbeat("idle")
-		case <-pollTicker.C:
-			if err := w.tryExecuteBuild(ctx); err != nil {
-				slog.Warn("build attempt failed", "error", err)
+			status := "idle"
+			if busy.Load() {
+				status = "busy"
 			}
+			w.sendHeartbeat(status)
+		case <-pollTicker.C:
+			if busy.Load() {
+				continue
+			}
+			busy.Store(true)
+			go func() {
+				defer busy.Store(false)
+				if err := w.tryExecuteBuild(ctx); err != nil {
+					slog.Warn("build attempt failed", "error", err)
+				}
+			}()
 		}
 	}
 }
@@ -147,9 +161,6 @@ func (w *Worker) tryExecuteBuild(ctx context.Context) error {
 	}
 
 	slog.Info("assigned build", "build_id", build.ID, "fingerprint", build.Fingerprint[:12])
-
-	// Build is already claimed (status=Building) by the API
-	w.sendHeartbeat("busy")
 
 	contextDir := filepath.Join(w.WorkDir, "builds", build.ID)
 	if err := os.MkdirAll(contextDir, 0755); err != nil {

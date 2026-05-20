@@ -180,8 +180,13 @@ func (r *BuildRepo) UpdateStatus(id string, status domain.Status, workerID, logL
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	if status.IsTerminal() {
-		_, e := r.db.Exec(`UPDATE builds SET status=?,worker_id=?,logs=logs||?,error=?,updated_at=?,completed_at=? WHERE id=?`,
+		_, e := r.db.Exec(`UPDATE builds SET status=?,worker_id=?,logs=logs||?,error=?,updated_at=?,completed_at=? WHERE id=? AND status NOT IN ('succeeded','failed','cancelled','timed_out')`,
 			status, workerID, logLine, errMsg, now, now, id)
+		return e
+	}
+	if status == domain.StatusBuilding {
+		_, e := r.db.Exec(`UPDATE builds SET status=?,worker_id=?,logs=logs||?,error=?,updated_at=? WHERE id=? AND status='pending'`,
+			status, workerID, logLine, errMsg, now, id)
 		return e
 	}
 	_, e := r.db.Exec(`UPDATE builds SET status=?,worker_id=?,logs=logs||?,error=?,updated_at=? WHERE id=?`,

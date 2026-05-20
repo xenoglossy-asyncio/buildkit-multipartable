@@ -82,6 +82,13 @@ func (s *BuildService) SubmitBulkBuild(contextData []byte, tagPrefix string, use
 		return nil, fmt.Errorf("no Dockerfiles found in archive")
 	}
 
+	// Apply quota — check each build slot
+	for i := 0; i < len(subdirs); i++ {
+		if ok, _, reason := s.quota.AllowBuild(userID, 600); !ok {
+			return nil, fmt.Errorf("quota exceeded at build %d/%d: %s", i+1, len(subdirs), reason)
+		}
+	}
+
 	var builds []*domain.Build
 	for _, sd := range subdirs {
 		subTar, err := extractSubdir(bytes.NewReader(contextData), sd)
@@ -168,12 +175,14 @@ func (s *BuildService) CompleteBuild(id string, status domain.Status, errMsg str
 		return err
 	}
 
-	b, _ := s.repo.Get(id)
-	if b != nil {
-		s.quota.ReleaseConcurrent(b.UserID)
-		if b.WorkerID != "" {
-			s.scheduler.MarkWorkerIdle(b.WorkerID, []string{b.Fingerprint})
-		}
+	b, err := s.repo.Get(id)
+	if err != nil {
+		slog.Warn("complete: failed to fetch build for cleanup", "id", id, "error", err)
+		return nil
+	}
+	s.quota.ReleaseConcurrent(b.UserID)
+	if b.WorkerID != "" {
+		s.scheduler.MarkWorkerIdle(b.WorkerID, []string{b.Fingerprint})
 	}
 	return nil
 }
