@@ -1,103 +1,90 @@
 import { useState, useEffect } from "react";
 
-const RANGE_DAYS: Record<string, number> = { today: 1, "7d": 7, "14d": 14, "30d": 30, "90d": 90 };
+interface Stats { total_builds: number; succeeded: number; failed: number; success_rate: number; pending: number; active_workers: number; queue_depth: number; }
+interface Averages { avg_build_sec: number; cache_hit_rate: number; }
+interface Daily { days: number; counts: number[]; }
+interface UserStat { user_id: string; count: number; succeeded: number; failed: number; avg_time_sec: number; cache_rate: number; success_rate: number; }
+interface RunningBuild { id: string; image_tag: string; status: string; elapsed: string; user_id: string; }
+
+async function j(url: string) { const r = await fetch(url); return r.ok ? r.json() : null; }
+
+function StatCard({ label, value, sub, cls }: { label: string; value: string; sub?: string; cls?: string }) {
+  return (
+    <div className="metric-card">
+      <div className={`metric-value ${cls || ""}`}>{value}</div>
+      <div className="metric-label">{label}</div>
+      {sub && <div className="metric-sub">{sub}</div>}
+    </div>
+  );
+}
 
 export default function Dashboard() {
-  const [stats, setStats] = useState<any>(null);
-  const [averages, setAverages] = useState<any>(null);
-  const [daily, setDaily] = useState<number[]>([]);
-  const [range, setRange] = useState("7d");
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [avg, setAvg] = useState<Averages | null>(null);
+  const [users, setUsers] = useState<UserStat[]>([]);
+  const [running, setRunning] = useState<RunningBuild[]>([]);
 
   useEffect(() => {
     const load = async () => {
-      try {
-        const [s, a] = await Promise.all([
-          fetch("/api/v1/stats").then(r => r.json()),
-          fetch("/api/v1/stats/averages").then(r => r.json()),
-        ]);
-        setStats(s); setAverages(a);
-      } catch {}
+      const [s, a, u, r] = await Promise.all([
+        j("/api/v1/stats"), j("/api/v1/stats/averages"),
+        j("/api/v1/stats/users?days=30"), j("/api/v1/stats/running"),
+      ]);
+      setStats(s); setAvg(a); setUsers(u || []); setRunning(r || []);
     };
-    load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    load(); const t = setInterval(load, 30000); return () => clearInterval(t);
   }, []);
 
-  useEffect(() => {
-    const days = RANGE_DAYS[range] || 14;
-    fetch(`/api/v1/stats/daily?days=${days}`)
-      .then(r => r.json())
-      .then(d => setDaily(d.counts || []))
-      .catch(() => {});
-  }, [range]);
-
   if (!stats) return <p style={{ color: "var(--muted)" }}>Loading...</p>;
-
-  const maxDaily = Math.max(1, ...daily);
 
   return (
     <div>
       <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Dashboard</div>
 
-      <div className="time-selector">
-        {Object.entries(RANGE_DAYS).map(([k, v]) => (
-          <button key={k} className={range === k ? "active" : ""} onClick={() => setRange(k)}>
-            {k === "today" ? "Today" : `${v}D`}
-          </button>
-        ))}
-      </div>
-
       <div className="metrics-grid">
-        <div className="metric-card">
-          <div className="metric-value">{stats.total_builds}</div>
-          <div className="metric-label">Total Builds</div>
-        </div>
-        <div className="metric-card">
-          <div className={`metric-value ${stats.success_rate >= 90 ? "green" : stats.success_rate >= 50 ? "yellow" : ""}`}>
-            {stats.success_rate?.toFixed(1)}%
-          </div>
-          <div className="metric-label">Success Rate</div>
-          <div className="progress-bar"><div className="fill green" style={{ width: `${stats.success_rate}%` }} /></div>
-          <div className="metric-sub">{stats.succeeded} ok / {stats.failed} fail</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-value">{averages?.avg_build_sec?.toFixed(1) || "—"}s</div>
-          <div className="metric-label">Avg Build Time</div>
-        </div>
-        <div className="metric-card">
-          <div className={`metric-value ${(averages?.cache_hit_rate || 0) > 50 ? "green" : "yellow"}`}>
-            {averages?.cache_hit_rate?.toFixed(1) || "0"}%
-          </div>
-          <div className="metric-label">Cache Hit Rate</div>
-          <div className="progress-bar"><div className="fill green" style={{ width: `${averages?.cache_hit_rate || 0}%` }} /></div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-value">{stats.active_workers}</div>
-          <div className="metric-label">Active Workers</div>
-        </div>
-        <div className="metric-card">
-          <div className={`metric-value ${stats.pending > 10 ? "yellow" : ""}`}>{stats.pending}</div>
-          <div className="metric-label">Pending</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-value">{stats.queue_depth}</div>
-          <div className="metric-label">Queue Depth</div>
-        </div>
+        <StatCard label="Today" value={`${stats.total_builds}`} sub={`↑${stats.succeeded} ↓${stats.failed}`} />
+        <StatCard label="Success Rate" value={`${stats.success_rate?.toFixed(1)}%`}
+          cls={stats.success_rate >= 90 ? "green" : stats.success_rate >= 50 ? "yellow" : ""} sub={`${stats.succeeded} ok / ${stats.failed} fail`} />
+        <StatCard label="Avg Build Time" value={`${avg?.avg_build_sec?.toFixed(1) || "—"}s`} />
+        <StatCard label="Cache Hit Rate" value={`${avg?.cache_hit_rate?.toFixed(1) || "0"}%`}
+          cls={(avg?.cache_hit_rate || 0) > 50 ? "green" : "yellow"} />
+        <StatCard label="Workers" value={`${stats.active_workers}`} sub="active / total" />
+        <StatCard label="Pending" value={`${stats.pending}`}
+          cls={stats.pending > 10 ? "yellow" : ""} sub={`Queue: ${stats.queue_depth}`} />
       </div>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <h2>Builds per Day</h2>
-        {daily.length > 0 ? (
-          <div className="bar-chart">
-            {daily.map((h, i) => (
-              <div key={i} className="bar" style={{ height: `${(h / maxDaily) * 100}%` }}
-                title={`Day ${daily.length - i}: ${h} builds`} />
-            ))}
+      {/* Running builds */}
+      {running.length > 0 && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h2>Running Builds ({running.length})</h2>
+          {running.map(b => (
+            <div key={b.id} className="stat-row" style={{ padding: "6px 0" }}>
+              <span className="build-id">{b.id.substring(0, 8)}</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{b.image_tag}</span>
+              <span className={`build-status ${b.status === "building" ? "status-building" : "status-pending"}`}>{b.status}</span>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>{b.elapsed}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Top users (30D) */}
+      {users.length > 0 && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h2>Top Users (30D)</h2>
+          <div className="build-row" style={{ color: "var(--muted)", fontSize: 10, textTransform: "uppercase", cursor: "default", padding: "4px 8px" }}>
+            <span>User</span><span style={{ textAlign: "right" }}>Builds</span><span style={{ textAlign: "right" }}>Rate</span><span style={{ textAlign: "right" }}>Time</span>
           </div>
-        ) : (
-          <p style={{ color: "var(--muted)", fontSize: 12 }}>No data for this period</p>
-        )}
-      </div>
+          {users.slice(0, 10).map(u => (
+            <div key={u.user_id} className="stat-row" style={{ padding: "6px 0", fontSize: 12 }}>
+              <span style={{ fontFamily: "monospace" }}>{u.user_id}</span>
+              <span style={{ textAlign: "right" }}>{u.count}</span>
+              <span style={{ textAlign: "right", color: u.success_rate >= 90 ? "var(--green)" : "var(--muted)" }}>{u.success_rate.toFixed(0)}%</span>
+              <span style={{ textAlign: "right", color: "var(--muted)" }}>{u.avg_time_sec.toFixed(1)}s</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

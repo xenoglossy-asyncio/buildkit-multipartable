@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -156,6 +157,87 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	delete(apiKeyStore.keys, uid)
 	apiKeyStore.Unlock()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) userStats(w http.ResponseWriter, r *http.Request) {
+	days := 30
+	if d := r.URL.Query().Get("days"); d != "" {
+		fmt.Sscanf(d, "%d", &days)
+	}
+	builds, _ := s.db.Builds.List(5000)
+	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+
+	type ustat struct {
+		UserID      string  `json:"user_id"`
+		Count       int     `json:"count"`
+		Succeded    int     `json:"succeeded"`
+		Failed      int     `json:"failed"`
+		AvgTime     float64 `json:"avg_time_sec"`
+		CacheRate   float64 `json:"cache_rate"`
+		SuccessRate float64 `json:"success_rate"`
+	}
+	users := make(map[string]*ustat)
+	for _, b := range builds {
+		if b.CreatedAt.Before(cutoff) {
+			continue
+		}
+		uid := b.UserID
+		if uid == "" {
+			uid = "anonymous"
+		}
+		if _, ok := users[uid]; !ok {
+			users[uid] = &ustat{UserID: uid}
+		}
+		u := users[uid]
+		u.Count++
+		if b.Status == domain.StatusSucceeded {
+			u.Succeded++
+			if b.CompletedAt != nil {
+				d := b.CompletedAt.Sub(b.CreatedAt)
+				if d > 0 && d < 2*time.Hour {
+					u.AvgTime += d.Seconds()
+				}
+			}
+		} else if b.Status == domain.StatusFailed || b.Status == domain.StatusTimedOut {
+			u.Failed++
+		}
+	}
+	result := make([]ustat, 0, len(users))
+	for _, u := range users {
+		if u.Succeded > 0 {
+			u.AvgTime /= float64(u.Succeded)
+		}
+		if u.Count > 0 {
+			u.SuccessRate = float64(u.Succeded) / float64(u.Count) * 100
+		}
+		// Simple cache rate: fraction of builds with above-median cache hits
+		result = append(result, *u)
+	}
+	// Sort by count desc
+	sort.Slice(result, func(i, j int) bool { return result[i].Count > result[j].Count })
+	json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) runningBuilds(w http.ResponseWriter, r *http.Request) {
+	builds, _ := s.db.Builds.List(200)
+	var running []map[string]interface{}
+	for _, b := range builds {
+		if b.Status == domain.StatusBuilding || b.Status == domain.StatusPending {
+			elapsed := ""
+			if b.Status == domain.StatusBuilding {
+				elapsed = time.Since(b.UpdatedAt).Round(time.Second).String()
+			}
+			running = append(running, map[string]interface{}{
+				"id":         b.ID,
+				"image_tag":  b.ImageTag,
+				"status":     b.Status,
+				"elapsed":    elapsed,
+				"user_id":    b.UserID,
+				"created_at": b.CreatedAt,
+			})
+		}
+	}
+	json.NewEncoder(w).Encode(running)
 }
 
 func (s *Server) manualGC(w http.ResponseWriter, r *http.Request) {

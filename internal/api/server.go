@@ -117,6 +117,8 @@ func (s *Server) setupRoutes() {
 		r.Get("/stats", s.publicStats)
 			r.Get("/stats/daily", s.dailyStats)
 			r.Get("/stats/averages", s.averageStats)
+			r.Get("/stats/users", s.userStats)
+			r.Get("/stats/running", s.runningBuilds)
 		})
 
 	s.router.Get("/metrics", metricsHandler)

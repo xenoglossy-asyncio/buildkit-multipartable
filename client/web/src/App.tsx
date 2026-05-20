@@ -6,12 +6,14 @@ import SubmitBuild from "./components/SubmitBuild";
 import BuildList from "./components/BuildList";
 import BuildDetail from "./components/BuildDetail";
 import AdminPanel from "./components/AdminPanel";
+import History from "./components/History";
 import "./App.css";
 
-type Tab = "dashboard" | "submit" | "builds" | "admin";
+type Tab = "dashboard" | "history" | "submit" | "builds" | "admin";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "dashboard", label: "Dashboard" },
+  { key: "history", label: "History" },
   { key: "submit", label: "Submit" },
   { key: "builds", label: "Builds" },
 ];
@@ -55,6 +57,7 @@ function App() {
 
       <main className={tab === "dashboard" ? "dashboard-grid" : ""}>
         {tab === "dashboard" && <Dashboard />}
+        {tab === "history" && <History />}
         {tab === "submit" && (
           <SubmitBuild onSubmitted={(b) => { setSelected(b.id); setTab("builds"); }} />
         )}

@@ -22,3 +22,17 @@ async def get_averages(request: Request):
     resp = await buildkit.build_client(request).get("/api/v1/stats/averages")
     resp.raise_for_status()
     return resp.json()
+
+
+@router.get("/stats/users")
+async def get_user_stats(request: Request, days: int = Query(default=30)):
+    resp = await buildkit.build_client(request).get(f"/api/v1/stats/users?days={days}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+@router.get("/stats/running")
+async def get_running(request: Request):
+    resp = await buildkit.build_client(request).get("/api/v1/stats/running")
+    resp.raise_for_status()
+    return resp.json()
