@@ -1,6 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import { getBuild, streamLogs, type Build, cancelBuild } from "../lib/api";
 
+const STATUS_CLASS: Record<string, string> = {
+  pending: "status-pending",
+  building: "status-building",
+  succeeded: "status-succeeded",
+  failed: "status-failed",
+  cancelled: "status-cancelled",
+  timed_out: "status-failed",
+};
+
 interface Props {
   id: string;
   onClose: () => void;
@@ -11,19 +20,13 @@ export default function BuildDetail({ id, onClose }: Props) {
   const [logs, setLogs] = useState("");
   const logEnd = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    getBuild(id).then(setBuild).catch(() => {});
-  }, [id]);
+  useEffect(() => { getBuild(id).then(setBuild).catch(() => {}); }, [id]);
+  useEffect(() => { setLogs(build?.logs || ""); }, [build]);
 
   useEffect(() => {
-    setLogs(build?.logs || "");
-  }, [build]);
-
-  useEffect(() => {
-    const es = streamLogs(
-      id,
+    const es = streamLogs(id,
       (line) => setLogs((prev) => prev + line + "\n"),
-      () => { es.close(); },
+      () => es.close(),
     );
     return () => es.close();
   }, [id]);
@@ -32,29 +35,26 @@ export default function BuildDetail({ id, onClose }: Props) {
     logEnd.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  async function handleCancel() {
-    try { await cancelBuild(id); } catch {}
-  }
-
   return (
-    <div className="card" style={{ marginTop: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <h2 style={{ margin: 0 }}>Build {id.substring(0, 8)}</h2>
+    <div className="card detail-card">
+      <div className="detail-header">
+        <h2>Build <span className="build-id">{id.substring(0, 8)}</span></h2>
         <div style={{ display: "flex", gap: 8 }}>
           {build?.status === "building" && (
-            <button className="danger" onClick={handleCancel} style={{ fontSize: 12, padding: "4px 12px" }}>Cancel</button>
+            <button className="danger" onClick={() => cancelBuild(id).catch(() => {})}>Cancel</button>
           )}
-          <button onClick={onClose} style={{ fontSize: 12, padding: "4px 12px", background: "#30363d" }}>Close</button>
+          <button className="ghost" onClick={onClose}>Close</button>
         </div>
       </div>
       {build && (
-        <div style={{ fontSize: 12, color: "#8b949e", marginBottom: 8 }}>
-          {build.image_tag} &middot; {build.status}
-          {build.error && <span style={{ color: "#f85149" }}> &middot; {build.error.substring(0, 120)}</span>}
+        <div className="detail-meta">
+          <span>{build.image_tag}</span>
+          <span className={`build-status ${STATUS_CLASS[build.status] || ""}`}>{build.status}</span>
+          {build.error && <span className="detail-error">{build.error.substring(0, 120)}</span>}
         </div>
       )}
       <div className="logs">
-        {logs || <span style={{ color: "#484f58" }}>Waiting for logs...</span>}
+        {logs || <span className="logs-placeholder">Waiting for logs...</span>}
         <div ref={logEnd} />
       </div>
     </div>

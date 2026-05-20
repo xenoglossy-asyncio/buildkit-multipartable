@@ -10,9 +10,14 @@ import "./App.css";
 
 type Tab = "dashboard" | "submit" | "builds" | "admin";
 
+const TABS: { key: Tab; label: string }[] = [
+  { key: "dashboard", label: "Dashboard" },
+  { key: "submit", label: "Submit" },
+  { key: "builds", label: "Builds" },
+];
+
 function App() {
   const [loggedIn, setLoggedIn] = useState(false);
-  const [_, setApiKeyState] = useState("");
   const [tab, setTab] = useState<Tab>("dashboard");
   const [builds, setBuilds] = useState<Build[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -20,22 +25,19 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const list = await listBuilds();
-      setBuilds(list);
+      setBuilds(await listBuilds());
     } catch {}
   }, []);
 
   useEffect(() => {
-    if (loggedIn) {
-      refresh();
-      const t = setInterval(refresh, 5000);
-      return () => clearInterval(t);
-    }
+    if (!loggedIn) return;
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
   }, [loggedIn, refresh]);
 
   function handleLogin(key: string, admin: boolean) {
     setApiKey(key);
-    setApiKeyState(key);
     setIsAdmin(admin);
     setLoggedIn(true);
   }
@@ -48,9 +50,9 @@ function App() {
         <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
           <h1>dtbuildkit</h1>
           <div className="tabs">
-            {(["dashboard", "submit", "builds"] as Tab[]).map((t) => (
-              <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-                {t === "dashboard" ? "Dashboard" : t === "submit" ? "Submit" : "Builds"}
+            {TABS.map(({ key, label }) => (
+              <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>
+                {label}
               </button>
             ))}
             {isAdmin && (
@@ -60,31 +62,22 @@ function App() {
             )}
           </div>
         </div>
-        <div className="header-right">
-          <button
-            className="ghost"
-            onClick={() => { localStorage.removeItem("dtbuild_api_key"); setLoggedIn(false); }}
-            style={{ fontSize: 11, padding: "4px 10px" }}
-          >
-            Logout
-          </button>
-        </div>
+        <button className="ghost logout-btn" onClick={() => { localStorage.removeItem("dtbuild_api_key"); setLoggedIn(false); }}>
+          Logout
+        </button>
       </header>
 
       <main className={tab === "dashboard" ? "dashboard-grid" : ""}>
         {tab === "dashboard" && <Dashboard />}
 
         {tab === "submit" && (
-          <>
-            <SubmitBuild onSubmitted={(b) => { setSelected(b.id); refresh(); setTab("builds"); }} />
-            <div />
-          </>
+          <SubmitBuild onSubmitted={(b) => { setSelected(b.id); refresh(); setTab("builds"); }} />
         )}
 
         {tab === "builds" && (
           <>
             <BuildList builds={builds} selected={selected} onSelect={setSelected} onRefresh={refresh} />
-            <div>{selected && <BuildDetail id={selected} onClose={() => setSelected(null)} />}</div>
+            {selected && <BuildDetail id={selected} onClose={() => setSelected(null)} />}
           </>
         )}
 

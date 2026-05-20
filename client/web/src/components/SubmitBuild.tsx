@@ -111,26 +111,8 @@ export default function SubmitBuild({ onSubmitted }: Props) {
       >
         <h2 style={{ margin: 0 }}>Submit Build</h2>
         <div style={{ display: "flex", gap: 4 }}>
-          <button
-            onClick={() => setMode("single")}
-            style={{
-              fontSize: 12,
-              padding: "4px 12px",
-              background: mode === "single" ? undefined : "#30363d",
-            }}
-          >
-            Single
-          </button>
-          <button
-            onClick={() => setMode("bulk")}
-            style={{
-              fontSize: 12,
-              padding: "4px 12px",
-              background: mode === "bulk" ? undefined : "#30363d",
-            }}
-          >
-            Bulk
-          </button>
+          <button onClick={() => setMode("single")} className={`mode-btn ${mode !== "single" ? "inactive" : ""}`}>Single</button>
+          <button onClick={() => setMode("bulk")} className={`mode-btn ${mode !== "bulk" ? "inactive" : ""}`}>Bulk</button>
         </div>
       </div>
 
