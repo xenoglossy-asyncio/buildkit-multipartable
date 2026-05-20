@@ -41,8 +41,15 @@ export interface Build {
   completed_at?: string;
 }
 
-export function listBuilds(): Promise<Build[]> {
-  return fetchJSON("/builds");
+export interface BuildPage {
+  builds: Build[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export function listBuilds(limit = 20, offset = 0): Promise<BuildPage> {
+  return fetchJSON(`/builds?limit=${limit}&offset=${offset}`);
 }
 
 export function getBuild(id: string): Promise<Build> {

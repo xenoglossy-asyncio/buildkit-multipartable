@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import { listBuilds, setApiKey, type Build } from "./lib/api";
+import { useState } from "react";
+import { setApiKey } from "./lib/api";
 import Login from "./components/Login";
 import Dashboard from "./components/Dashboard";
 import SubmitBuild from "./components/SubmitBuild";
@@ -18,28 +18,12 @@ const TABS: { key: Tab; label: string }[] = [
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false);
-  const [apiKey, setApiKeyVal] = useState("");
   const [tab, setTab] = useState<Tab>("dashboard");
-  const [builds, setBuilds] = useState<Build[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      setBuilds(await listBuilds());
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    if (!loggedIn) return;
-    refresh();
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
-  }, [loggedIn, refresh]);
-
   function handleLogin(key: string, admin: boolean) {
     setApiKey(key);
-    setApiKeyVal(key);
     setIsAdmin(admin);
     setLoggedIn(true);
   }
@@ -70,19 +54,16 @@ function App() {
       </header>
 
       <main className={tab === "dashboard" ? "dashboard-grid" : ""}>
-        {tab === "dashboard" && <Dashboard isAdmin={isAdmin} apiKey={apiKey} />}
-
+        {tab === "dashboard" && <Dashboard />}
         {tab === "submit" && (
-          <SubmitBuild onSubmitted={(b) => { setSelected(b.id); refresh(); setTab("builds"); }} />
+          <SubmitBuild onSubmitted={(b) => { setSelected(b.id); setTab("builds"); }} />
         )}
-
         {tab === "builds" && (
           <>
-            <BuildList builds={builds} selected={selected} onSelect={setSelected} onRefresh={refresh} />
+            <BuildList selected={selected} onSelect={setSelected} />
             {selected && <BuildDetail id={selected} onClose={() => setSelected(null)} />}
           </>
         )}
-
         {tab === "admin" && isAdmin && <AdminPanel />}
       </main>
     </div>
