@@ -101,6 +101,8 @@ func (s *Server) setupRoutes() {
 		r.Post("/workers/heartbeat", s.workerHeartbeat)
 	})
 
+	s.router.Route("/api/v1/admin", s.setupAdminRoutes)
+
 	s.router.Get("/metrics", metricsHandler)
 	s.router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -205,6 +205,9 @@ func (s *BuildService) CancelBuild(id string) error {
 	return s.repo.UpdateStatus(id, domain.StatusCancelled, "", "", "cancelled by user")
 }
 
+// QueueLen returns the in-memory queue depth.
+func (s *BuildService) QueueLen() int { return s.queue.Len() }
+
 // AppendLog appends a log line to a build.
 func (s *BuildService) AppendLog(id string, line string) error {
 	b, err := s.repo.Get(id)

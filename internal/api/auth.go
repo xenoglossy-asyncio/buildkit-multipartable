@@ -33,8 +33,8 @@ func authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Skip auth for UI assets
-		if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/ui") {
+		// Skip auth for UI assets and admin (admin has its own middleware)
+		if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/ui") || strings.HasPrefix(r.URL.Path, "/api/v1/admin") {
 			next.ServeHTTP(w, r)
 			return
 		}
