@@ -36,7 +36,7 @@ type Worker struct {
 	HTTPClient    *http.Client
 
 	mu        sync.RWMutex
-	cacheKeys []string // fingerprints of completed builds for cache-affinity routing
+	cacheKeys []string // instruction hashes for cache-affinity routing
 }
 
 // NewWorker creates a worker instance.
@@ -110,18 +110,24 @@ func (w *Worker) getCacheKeys() []string {
 	return keys
 }
 
-func (w *Worker) addCacheKey(fp string) {
+func (w *Worker) addCacheKeys(instructions []string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	// Keep last 128 fingerprints
-	for _, k := range w.cacheKeys {
-		if k == fp {
-			return
+	for _, instr := range instructions {
+		seen := false
+		for _, k := range w.cacheKeys {
+			if k == instr {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			w.cacheKeys = append(w.cacheKeys, instr)
 		}
 	}
-	w.cacheKeys = append(w.cacheKeys, fp)
-	if len(w.cacheKeys) > 128 {
-		w.cacheKeys = w.cacheKeys[len(w.cacheKeys)-128:]
+	// Trim to last 512 entries
+	if len(w.cacheKeys) > 512 {
+		w.cacheKeys = w.cacheKeys[len(w.cacheKeys)-512:]
 	}
 }
 
@@ -149,6 +155,8 @@ func (w *Worker) tryExecuteBuild(ctx context.Context) error {
 		return nil // no pending builds
 	}
 	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		slog.Warn("server returned non-OK for next build", "status", resp.StatusCode, "body", string(body[:min(len(body), 200)]))
 		return nil
 	}
 
@@ -193,7 +201,7 @@ func (w *Worker) tryExecuteBuild(ctx context.Context) error {
 	if err := w.executeBuild(ctx, &build, contextDir, dockerfile); err != nil {
 		w.completeBuild(build.ID, domain.StatusFailed, err.Error(), "")
 	} else {
-		w.addCacheKey(build.Fingerprint)
+		w.addCacheKeys(build.Instructions)
 		w.completeBuild(build.ID, domain.StatusSucceeded, "", "")
 	}
 	return nil
@@ -312,14 +320,28 @@ func (w *Worker) sendLog(buildID, line string) {
 }
 
 func (w *Worker) completeBuild(buildID string, status domain.Status, errMsg, digest string) {
-	// Use proper JSON encoding to escape special characters in error messages
 	type completeReq struct {
 		Status      domain.Status `json:"status"`
 		Error       string       `json:"error,omitempty"`
 		ImageDigest string       `json:"image_digest,omitempty"`
 	}
 	body, _ := json.Marshal(completeReq{Status: status, Error: errMsg, ImageDigest: digest})
-	w.doPost("/api/v1/builds/"+buildID+"/complete", string(body))
+
+	// Retry up to 3 times with backoff
+	for i := 0; i < 3; i++ {
+		code, err := w.doPost("/api/v1/builds/"+buildID+"/complete", string(body))
+		if err != nil {
+			slog.Warn("completeBuild request failed, retrying", "build", buildID, "attempt", i+1, "error", err)
+			time.Sleep(time.Duration(i+1) * time.Second)
+			continue
+		}
+		if code == 200 {
+			return
+		}
+		slog.Warn("completeBuild non-200, retrying", "build", buildID, "status", code, "attempt", i+1)
+		time.Sleep(time.Duration(i+1) * time.Second)
+	}
+	slog.Error("completeBuild failed after retries", "build", buildID)
 }
 
 func (w *Worker) doPost(path, body string) (int, error) {

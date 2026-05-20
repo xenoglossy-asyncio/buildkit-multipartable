@@ -30,6 +30,7 @@ type Build struct {
 	Dockerfile     string            `json:"dockerfile"`
 	ImageTag       string            `json:"image_tag,omitempty"`
 	Args           map[string]string `json:"args,omitempty"`
+	Instructions   []string          `json:"instructions,omitempty"` // sorted RUN/COPY instructions for cache-affinity scoring
 	Logs           string            `json:"logs,omitempty"`
 	Error          string            `json:"error,omitempty"`
 	RetryCount     int               `json:"retry_count"`

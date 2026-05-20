@@ -82,7 +82,7 @@ func NewServer(addr string, dbPath string, blobBasePath string) (*Server, error)
 func (s *Server) setupRoutes() {
 	s.router.Use(middleware.Logger)
 	s.router.Use(middleware.Recoverer)
-	s.router.Use(middleware.Timeout(30 * time.Second))
+	s.router.Use(middleware.Timeout(5 * time.Minute))
 	s.router.Use(authMiddleware)
 
 	s.router.Route("/api/v1", func(r chi.Router) {

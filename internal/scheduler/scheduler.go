@@ -204,25 +204,43 @@ func cacheScore(workerCacheKeys []string, fingerprint string) float64 {
 	return math.Min(bestScore/64.0, 1.0)
 }
 
-// ScoreBuildForWorker returns a 0..1 score for how well a build fingerprint
-// matches a worker's cache (higher = likely cache hit on that worker).
-func (s *Scheduler) ScoreBuildForWorker(fingerprint, workerID string) float64 {
+// ScoreBuildForWorker returns a 0..1 score for how well a build's instruction set
+// overlaps with a worker's cached builds (higher = likely cache hit on that worker).
+// Uses Jaccard similarity on instruction strings.
+func (s *Scheduler) ScoreBuildForWorker(buildInstructions []string, workerID string) float64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	ws, ok := s.workers[workerID]
-	if !ok || len(ws.CacheKeys) == 0 {
+	if !ok || len(ws.CacheKeys) == 0 || len(buildInstructions) == 0 {
 		return 0
 	}
 
-	best := 0.0
+	// CacheKeys are now instruction strings. Compute Jaccard similarity.
+	buildSet := make(map[string]struct{}, len(buildInstructions))
+	for _, instr := range buildInstructions {
+		buildSet[instr] = struct{}{}
+	}
+
+	var intersection, union int
+	cacheSet := make(map[string]struct{})
 	for _, ck := range ws.CacheKeys {
-		score := sharedPrefixLen(fingerprint, ck) / 64.0
-		if score > best {
-			best = score
+		cacheSet[ck] = struct{}{}
+		union++
+		if _, ok := buildSet[ck]; ok {
+			intersection++
 		}
 	}
-	return best
+	for _, instr := range buildInstructions {
+		if _, ok := cacheSet[instr]; !ok {
+			union++
+		}
+	}
+
+	if union == 0 {
+		return 0
+	}
+	return float64(intersection) / float64(union)
 }
 
 // GetWorker returns a worker's current state.

@@ -66,6 +66,7 @@ func (d *DB) migrate() error {
 		retry_count INTEGER NOT NULL DEFAULT 0,
 		max_retries INTEGER NOT NULL DEFAULT 0,
 		timeout_seconds INTEGER NOT NULL DEFAULT 600,
+		instructions TEXT NOT NULL DEFAULT '[]',
 		user_id TEXT NOT NULL DEFAULT '',
 		priority INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL,
@@ -129,14 +130,14 @@ func (r *BuildRepo) CreateBatch(builds []*domain.Build) error {
 func (r *BuildRepo) Get(id string) (*domain.Build, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return scanBuild(r.db.QueryRow(`SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,user_id,priority,created_at,updated_at,completed_at FROM builds WHERE id=?`, id))
+	return scanBuild(r.db.QueryRow(`SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,created_at,updated_at,completed_at FROM builds WHERE id=?`, id))
 }
 
 func (r *BuildRepo) List(limit int) ([]*domain.Build, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	rows, err := r.db.Query(`SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,user_id,priority,created_at,updated_at,completed_at FROM builds ORDER BY created_at DESC LIMIT ?`, limit)
+	rows, err := r.db.Query(`SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,created_at,updated_at,completed_at FROM builds ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +158,7 @@ func (r *BuildRepo) ListPending() ([]*domain.Build, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	rows, err := r.db.Query(`SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,user_id,priority,created_at,updated_at,completed_at FROM builds WHERE status='pending' ORDER BY priority DESC, created_at ASC LIMIT 100`)
+	rows, err := r.db.Query(`SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,created_at,updated_at,completed_at FROM builds WHERE status='pending' ORDER BY priority DESC, created_at ASC LIMIT 100`)
 	if err != nil {
 		return nil, err
 	}
@@ -179,19 +180,32 @@ func (r *BuildRepo) UpdateStatus(id string, status domain.Status, workerID, logL
 	defer r.mu.Unlock()
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	var result sql.Result
+	var err error
+
 	if status.IsTerminal() {
-		_, e := r.db.Exec(`UPDATE builds SET status=?,worker_id=?,logs=logs||?,error=?,updated_at=?,completed_at=? WHERE id=? AND status NOT IN ('succeeded','failed','cancelled','timed_out')`,
+		result, err = r.db.Exec(`UPDATE builds SET status=?,worker_id=?,logs=logs||?,error=?,updated_at=?,completed_at=? WHERE id=? AND status NOT IN ('succeeded','failed','cancelled','timed_out')`,
 			status, workerID, logLine, errMsg, now, now, id)
-		return e
-	}
-	if status == domain.StatusBuilding {
-		_, e := r.db.Exec(`UPDATE builds SET status=?,worker_id=?,logs=logs||?,error=?,updated_at=? WHERE id=? AND status='pending'`,
+	} else if status == domain.StatusBuilding {
+		result, err = r.db.Exec(`UPDATE builds SET status=?,worker_id=?,logs=logs||?,error=?,updated_at=? WHERE id=? AND status='pending'`,
 			status, workerID, logLine, errMsg, now, id)
-		return e
+	} else {
+		result, err = r.db.Exec(`UPDATE builds SET status=?,worker_id=?,logs=logs||?,error=?,updated_at=? WHERE id=?`,
+			status, workerID, logLine, errMsg, now, id)
 	}
-	_, e := r.db.Exec(`UPDATE builds SET status=?,worker_id=?,logs=logs||?,error=?,updated_at=? WHERE id=?`,
-		status, workerID, logLine, errMsg, now, id)
-	return e
+
+	if err != nil {
+		return err
+	}
+
+	// For building status, verify we actually claimed the build
+	if status == domain.StatusBuilding {
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("build already claimed or not pending")
+		}
+	}
+	return nil
 }
 
 func (r *BuildRepo) CountPending() (int64, error) {
@@ -308,33 +322,35 @@ func (r *BuildRepo) SetQuota(q *domain.Quota) error {
 
 func insertBuild(db *sql.DB, b *domain.Build) error {
 	argsJSON, _ := json.Marshal(b.Args)
+	instrJSON, _ := json.Marshal(b.Instructions)
 	now := time.Now().UTC()
 	b.CreatedAt = now
 	b.UpdatedAt = now
-	_, err := db.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,user_id,priority,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := db.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		b.ID, b.Status, b.Fingerprint, b.WorkerID, b.ContextKey, b.Dockerfile, b.ImageTag, string(argsJSON),
-		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, b.UserID, b.Priority,
+		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, instrJSON, b.UserID, b.Priority,
 		b.CreatedAt.Format(time.RFC3339), b.UpdatedAt.Format(time.RFC3339))
 	return err
 }
 
 func insertBuildTx(tx *sql.Tx, b *domain.Build) error {
 	argsJSON, _ := json.Marshal(b.Args)
+	instrJSON, _ := json.Marshal(b.Instructions)
 	now := time.Now().UTC()
 	b.CreatedAt = now
 	b.UpdatedAt = now
-	_, err := tx.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,user_id,priority,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := tx.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		b.ID, b.Status, b.Fingerprint, b.WorkerID, b.ContextKey, b.Dockerfile, b.ImageTag, string(argsJSON),
-		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, b.UserID, b.Priority,
+		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, instrJSON, b.UserID, b.Priority,
 		b.CreatedAt.Format(time.RFC3339), b.UpdatedAt.Format(time.RFC3339))
 	return err
 }
 
 func scanBuild(row *sql.Row) (*domain.Build, error) {
 	var b domain.Build
-	var argsJSON, completedAt sql.NullString
+	var argsJSON, completedAt, instrJSON sql.NullString
 	var createdAt, updatedAt string
-	err := row.Scan(&b.ID, &b.Status, &b.Fingerprint, &b.WorkerID, &b.ContextKey, &b.Dockerfile, &b.ImageTag, &argsJSON, &b.Logs, &b.Error, &b.RetryCount, &b.MaxRetries, &b.TimeoutSeconds, &b.UserID, &b.Priority, &createdAt, &updatedAt, &completedAt)
+	err := row.Scan(&b.ID, &b.Status, &b.Fingerprint, &b.WorkerID, &b.ContextKey, &b.Dockerfile, &b.ImageTag, &argsJSON, &b.Logs, &b.Error, &b.RetryCount, &b.MaxRetries, &b.TimeoutSeconds, &instrJSON, &b.UserID, &b.Priority, &createdAt, &updatedAt, &completedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -345,6 +361,9 @@ func scanBuild(row *sql.Row) (*domain.Build, error) {
 	}
 	if b.Args == nil {
 		b.Args = map[string]string{}
+	}
+	if instrJSON.Valid {
+		json.Unmarshal([]byte(instrJSON.String), &b.Instructions)
 	}
 	if completedAt.Valid {
 		t, _ := time.Parse(time.RFC3339, completedAt.String)
@@ -355,9 +374,9 @@ func scanBuild(row *sql.Row) (*domain.Build, error) {
 
 func scanBuildRow(rows *sql.Rows) (*domain.Build, error) {
 	var b domain.Build
-	var argsJSON, completedAt sql.NullString
+	var argsJSON, completedAt, instrJSON sql.NullString
 	var createdAt, updatedAt string
-	err := rows.Scan(&b.ID, &b.Status, &b.Fingerprint, &b.WorkerID, &b.ContextKey, &b.Dockerfile, &b.ImageTag, &argsJSON, &b.Logs, &b.Error, &b.RetryCount, &b.MaxRetries, &b.TimeoutSeconds, &b.UserID, &b.Priority, &createdAt, &updatedAt, &completedAt)
+	err := rows.Scan(&b.ID, &b.Status, &b.Fingerprint, &b.WorkerID, &b.ContextKey, &b.Dockerfile, &b.ImageTag, &argsJSON, &b.Logs, &b.Error, &b.RetryCount, &b.MaxRetries, &b.TimeoutSeconds, &instrJSON, &b.UserID, &b.Priority, &createdAt, &updatedAt, &completedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -368,6 +387,9 @@ func scanBuildRow(rows *sql.Rows) (*domain.Build, error) {
 	}
 	if b.Args == nil {
 		b.Args = map[string]string{}
+	}
+	if instrJSON.Valid {
+		json.Unmarshal([]byte(instrJSON.String), &b.Instructions)
 	}
 	if completedAt.Valid {
 		t, _ := time.Parse(time.RFC3339, completedAt.String)

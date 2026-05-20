@@ -115,9 +115,12 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions, logWriter io.Writ
 		}
 	}()
 
+	// Wait for the command to exit first (closes stdout pipe),
+	// THEN wait for the log goroutine to drain remaining output.
+	waitErr := cmd.Wait()
 	logWG.Wait()
 
-	if err := cmd.Wait(); err != nil {
+	if waitErr != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}

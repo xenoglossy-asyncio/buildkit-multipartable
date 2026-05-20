@@ -56,6 +56,7 @@ func (s *BuildService) SubmitBuild(buildID, ctxKey string, dockerfileContent []b
 		Dockerfile:     string(dockerfileContent),
 		ImageTag:       imageTag,
 		Args:           args,
+		Instructions:   fp.Instructions,
 		TimeoutSeconds: effectiveTimeout,
 		UserID:         userID,
 		Priority:       0,
@@ -82,10 +83,13 @@ func (s *BuildService) SubmitBulkBuild(contextData []byte, tagPrefix string, use
 		return nil, fmt.Errorf("no Dockerfiles found in archive")
 	}
 
-	// Apply quota — check each build slot
+	// Apply quota — check each build slot (both daily and concurrent)
 	for i := 0; i < len(subdirs); i++ {
 		if ok, _, reason := s.quota.AllowBuild(userID, 600); !ok {
 			return nil, fmt.Errorf("quota exceeded at build %d/%d: %s", i+1, len(subdirs), reason)
+		}
+		if !s.quota.ReserveConcurrent(userID) {
+			return nil, fmt.Errorf("concurrent limit exceeded at build %d/%d", i+1, len(subdirs))
 		}
 	}
 
@@ -115,6 +119,7 @@ func (s *BuildService) SubmitBulkBuild(contextData []byte, tagPrefix string, use
 			ContextKey:     ctxKey,
 			Dockerfile:     sd.name,
 			ImageTag:       tag,
+			Instructions:   fp.Instructions,
 			TimeoutSeconds: 600,
 			UserID:         userID,
 		}
@@ -140,7 +145,7 @@ func (s *BuildService) SubmitBulkBuild(contextData []byte, tagPrefix string, use
 func (s *BuildService) AssignBuild(workerID string) (*domain.Build, error) {
 	// Use queue with cache affinity scoring
 	build := s.queue.PeekByScore(func(b *domain.Build) float64 {
-		return s.scheduler.ScoreBuildForWorker(b.Fingerprint, workerID)
+		return s.scheduler.ScoreBuildForWorker(b.Instructions, workerID)
 	})
 	if build == nil {
 		// Queue empty — check DB directly
@@ -154,7 +159,7 @@ func (s *BuildService) AssignBuild(workerID string) (*domain.Build, error) {
 		}
 		// Try again
 		build = s.queue.PeekByScore(func(b *domain.Build) float64 {
-			return s.scheduler.ScoreBuildForWorker(b.Fingerprint, workerID)
+			return s.scheduler.ScoreBuildForWorker(b.Instructions, workerID)
 		})
 		if build == nil {
 			build = builds[0] // FIFO fallback
