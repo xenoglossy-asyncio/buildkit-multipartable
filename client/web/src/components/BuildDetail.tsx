@@ -20,7 +20,11 @@ export default function BuildDetail({ id, onClose }: Props) {
   const [logs, setLogs] = useState("");
   const logEnd = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { getBuild(id).then(setBuild).catch(() => {}); }, [id]);
+  useEffect(() => {
+    getBuild(id).then(setBuild).catch(() => {});
+    const t = setInterval(() => getBuild(id).then(setBuild).catch(() => {}), 2000);
+    return () => clearInterval(t);
+  }, [id]);
   useEffect(() => { setLogs(build?.logs || ""); }, [build]);
 
   useEffect(() => {
