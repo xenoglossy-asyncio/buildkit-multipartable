@@ -24,12 +24,17 @@ export default function SubmitBuild({ onSubmitted }: Props) {
     if (!entries || entries.length === 0) { setError("Drop a folder or select one first"); return; }
     setError(""); setBulkResult(""); setUploading(true);
     try {
-      const tar = await buildTarGz(entries);
+      // Strip root folder name from all paths so Dockerfile/COPY references work
+      const cleaned = entries.map(e => {
+        const idx = e.name.indexOf("/");
+        return idx > 0 ? { ...e, name: e.name.substring(idx + 1) } : e;
+      });
+      const tar = await buildTarGz(cleaned);
 
       // Find Dockerfile content
       let dfContent = dockerfile;
-      for (const e of entries) {
-        if (e.name.endsWith("/" + dockerfile) || e.name.endsWith("/Dockerfile") || e.name === dockerfile || e.name === "Dockerfile") {
+      for (const e of cleaned) {
+        if (e.name === dockerfile || e.name === "Dockerfile" || e.name.endsWith("/" + dockerfile) || e.name.endsWith("/Dockerfile")) {
           dfContent = new TextDecoder().decode(e.data);
           break;
         }
