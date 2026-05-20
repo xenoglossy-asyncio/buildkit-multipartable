@@ -57,7 +57,7 @@ services:
 
   # ---- API Server ----
   server:
-    build: .
+    build: ./server
     container_name: dtbuild-server
     command: [ "/app/dtbuild-server", "--addr=:8640", "--db=postgres://dtbuild:dtbuild@postgres:5432/dtbuildkit?sslmode=disable", "--blobs=/data/blobs" ]
     environment:
@@ -71,18 +71,18 @@ services:
 
   # ---- Web (nginx + frontend SPA) ----
   web:
-    build: ./client/web
+    build: ./web
     container_name: dtbuild-web
     ports:
       - "3000:80"
     depends_on:
-      - client
+      - api
     restart: unless-stopped
 
   # ---- API Service (FastAPI) ----
-  client:
-    build: ./client
-    container_name: dtbuild-client
+  api:
+    build: ./api
+    container_name: dtbuild-api
     ports:
       - "8100:3000"
     environment:
@@ -96,7 +96,7 @@ services:
 
   # ---- Workers ----
   worker:
-    build: .
+    build: ./server
     container_name: dtbuild-worker
     command:
       - "/app/dtbuild-worker"
@@ -117,7 +117,7 @@ services:
     restart: unless-stopped
 
   worker-2:
-    build: .
+    build: ./server
     container_name: dtbuild-worker-2
     command:
       - "/app/dtbuild-worker"
@@ -138,7 +138,7 @@ services:
     restart: unless-stopped
 
   worker-3:
-    build: .
+    build: ./server
     container_name: dtbuild-worker-3
     command:
       - "/app/dtbuild-worker"
@@ -159,7 +159,7 @@ services:
     restart: unless-stopped
 
   worker-4:
-    build: .
+    build: ./server
     container_name: dtbuild-worker-4
     command:
       - "/app/dtbuild-worker"
@@ -180,7 +180,7 @@ services:
     restart: unless-stopped
 
   worker-5:
-    build: .
+    build: ./server
     container_name: dtbuild-worker-5
     command:
       - "/app/dtbuild-worker"

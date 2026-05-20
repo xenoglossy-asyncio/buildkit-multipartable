@@ -6,28 +6,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **dtbuildkit** is a distributed, cache-aware Docker image build service designed for high-throughput agentic code evaluation workloads (thousands to tens of thousands of builds per day). It uses BuildKit workers with consistent hash scheduling for cache affinity and S3-backed registry storage.
 
+## Repository Layout
+
+The repository is organized as three sibling sub-projects at the root:
+
+- `server/` — Go build engine (contains `cmd/`, `internal/`, `pkg/`, `go.mod`, `Dockerfile`, `testdata/`). Hosts the API server, worker, and CLI binaries.
+- `api/` — Python FastAPI gateway (`main.py`, `routers/`, `services/`, `pyproject.toml`, `Dockerfile`). Managed with `uv`.
+- `web/` — React + TypeScript + Vite frontend (`src/`, `nginx.conf`, `Dockerfile`). Built into a static bundle served by an nginx container.
+- `deploy/` — Shared deployment artifacts: `docker-compose.yaml` lives at repo root; `deploy/k8s/` holds Kubernetes manifests; `deploy/` also contains `buildkitd.toml`, `registry-config.yml`, `htpasswd`, etc.
+
 ## Architecture
 
 Four-tier microservice architecture:
 
-1. **Web** (nginx) — Static SPA + reverse proxy on port 3000
+1. **Web** (nginx, sourced from `web/`) — Static SPA + reverse proxy on port 3000
    - Serves React production build
    - Proxies `/api/*` to FastAPI, SSE passthrough (`proxy_buffering off`)
    - SPA fallback routing (`try_files`)
    - Immutable cache headers for `/assets/`
 
-2. **Client** (FastAPI) — API gateway on port 8100 (host) / 3000 (container)
+2. **API** (FastAPI, sourced from `api/`) — API gateway on port 8100 (host) / 3000 (container)
    - Auth, dashboard, admin panel, build submission
    - Uploads build contexts directly to S3 (boto3)
    - Sends JSON metadata to Go server (no file proxying)
    - Redis-cached stats (30s TTL, background refresh)
 
-3. **Server** (Go + chi) — Internal build engine on port 8640
+3. **Server** (Go + chi, sourced from `server/`) — Internal build engine on port 8640
    - Build CRUD, scheduling, worker management
    - SSE log streaming, Prometheus metrics
    - No auth layer (internal only)
 
-4. **Worker** (Go + buildkitd subprocess) — Build execution
+4. **Worker** (Go + buildkitd subprocess, sourced from `server/`) — Build execution
    - Polls server for next build via consistent hash ring
    - Downloads contexts from S3 (HTTP fallback via server)
    - Executes `buildctl build`, streams logs to server
@@ -63,7 +72,7 @@ docker compose down
 
 **Service URLs:**
 - Web (nginx SPA): http://localhost:3000
-- Client (FastAPI API): http://localhost:8100
+- API (FastAPI): http://localhost:8100
 - Server (Go API): http://localhost:8640
 - Registry: http://localhost:5000
 - PostgreSQL: localhost:5432 (user: dtbuild, pass: dtbuild, db: dtbuildkit)
@@ -71,28 +80,30 @@ docker compose down
 
 ### Frontend Development
 
-React + TypeScript + Vite frontend in `client/web/`:
+React + TypeScript + Vite frontend in `web/`:
 
 ```bash
-cd client/web
+cd web
 npm install
 npm run dev          # Dev server with HMR
 npm run build        # Production build
 npm run lint         # ESLint
 ```
 
-Frontend is served by a dedicated nginx container (`web` service) in production. Built via `client/web/Dockerfile` (multi-stage: Node 22 → nginx:alpine). Nginx proxies `/api/*` requests to FastAPI.
+Frontend is served by a dedicated nginx container (`web` service) in production. Built via `web/Dockerfile` (multi-stage: Node 22 → nginx:alpine). Nginx proxies `/api/*` requests to FastAPI.
 
 ### Backend Development
 
-**Go server/worker:**
+**Go server/worker (run from `server/`):**
 ```bash
+cd server
+
 # Build all binaries
 go build -o dtbuild ./cmd/dtbuild
 go build -o dtbuild-server ./cmd/dtbuild-server
 go build -o dtbuild-worker ./cmd/dtbuild-worker
 
-# Run tests
+# Run tests (still inside server/)
 go test ./...                           # All tests
 go test ./internal/scheduler            # Single package
 go test -v -run TestFromDockerfile ./internal/fingerprint  # Single test
@@ -109,9 +120,9 @@ go test -v -run TestFromDockerfile ./internal/fingerprint  # Single test
   --cache-registry=localhost:5000/cache
 ```
 
-**FastAPI client:**
+**FastAPI gateway (run from `api/`):**
 ```bash
-cd client
+cd api
 uv sync              # Install dependencies
 uv run uvicorn main:app --reload --port 8100
 
@@ -124,8 +135,8 @@ export REDIS_URL=redis://localhost:6379
 ### CLI Tool
 
 ```bash
-# Build CLI
-go build -o dtbuild ./cmd/dtbuild
+# Build CLI (must be run inside server/)
+cd server && go build -o dtbuild ./cmd/dtbuild
 
 # Submit build
 export DTBUILD_API_KEY=your-key
@@ -145,6 +156,8 @@ export DTBUILD_API_KEY=your-key
 ```
 
 ## Key Internal Packages
+
+All Go packages live under `server/internal/`. Paths below are relative to `server/`.
 
 ### `internal/scheduler`
 Consistent hash ring with virtual nodes (150 replicas per worker). Routes builds to workers based on Dockerfile fingerprint for cache affinity. Affinity scoring considers:
@@ -221,6 +234,13 @@ React SPA with tab-based navigation:
 
 **sessionStorage caching:** Each tab caches data in sessionStorage. Tab switches show cached data instantly, then refresh in background.
 
+## Docker Build Contexts
+
+- **Server / Worker image:** built from `server/` (`docker build -t dtbuildkit:latest ./server`). The `server/Dockerfile` produces a single image embedding `dtbuild`, `dtbuild-server`, and `dtbuild-worker`.
+- **API image:** built from `api/` (`docker build -t dtbuildkit-api:latest ./api`). FastAPI service installed via `uv`.
+- **Web image:** built from `web/` (`docker build -t dtbuildkit-web:latest ./web`). Multi-stage: Node 22 → nginx:alpine; static bundle is served by nginx with `/api/*` reverse-proxied to the FastAPI service.
+- `docker-compose.yaml` at the repo root wires these contexts together (`build: ./server`, `build: ./api`, `build: ./web`).
+
 ## Environment Variables
 
 ### Go Server/Worker
@@ -230,7 +250,7 @@ React SPA with tab-based navigation:
 - `S3_USE_SSL` — Use HTTPS for S3 (default: `false`)
 - `DTBUILD_ADMIN_KEY` — Admin API key
 
-### FastAPI Client
+### FastAPI Gateway
 - `BUILD_SERVICE` — Go server URL (default: `http://server:8640`)
 - `DTBUILD_ADMIN_KEY` — Admin key (must match server)
 - `REDIS_URL` — Redis connection (default: `redis://redis:6379`)
@@ -241,7 +261,11 @@ React SPA with tab-based navigation:
 
 ## Testing
 
+Go tests live inside `server/`; run them from that directory:
+
 ```bash
+cd server
+
 # Run all Go tests
 go test ./...
 
@@ -276,7 +300,7 @@ Test coverage:
 **Current deployment on this machine:**
 - Running via Docker Compose
 - 5 workers active
-- Web (nginx) on port 3000, Client (FastAPI) on port 8100, Server on port 8640
+- Web (nginx) on port 3000, API (FastAPI) on port 8100, Server on port 8640
 - PostgreSQL on 5432, Redis on 6379, Registry on 5000
 
 ## Key Design Decisions
