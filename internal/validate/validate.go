@@ -129,30 +129,18 @@ func validateImageRef(ref string, r *Result) {
 		r.add("dockerfile", fmt.Sprintf("invalid image ref: %s (contains spaces)", ref))
 		return
 	}
-	// Warn if no port (will be treated as Docker Hub)
-	parts := strings.SplitN(ref, "/", 2)
-	if len(parts) == 1 || !strings.Contains(parts[0], ".") && !strings.Contains(parts[0], ":") {
-		// Single-name or single-host ref without dot or port → Docker Hub
-		// This is a warning, not an error (some users want Docker Hub)
-	}
 }
 
 func validateTag(tag string, r *Result) {
 	// tag format: [registry[:port]/]image[:tag]
-	// Must have at least a registry host when not pushing to Docker Hub
 	if strings.Contains(tag, "://") {
 		r.add("image_tag", fmt.Sprintf("invalid: %s (contains ://)", tag))
 		return
 	}
-	parts := strings.SplitN(tag, "/", 2)
-	if len(parts) == 2 {
-		host := parts[0]
-		// Production registries should have a port or dot
-		if !strings.Contains(host, ":") && !strings.Contains(host, ".") && host != "localhost" {
-			r.add("image_tag", fmt.Sprintf("registry '%s' missing port — will be treated as Docker Hub. Use registry:80/repo:tag", host))
-		}
-	}
 	if strings.Count(tag, ":") > 2 {
 		r.add("image_tag", "too many colons in tag")
 	}
+	// Note: missing port is NOT an error. BuildKit will resolve single-hostname
+	// registries as Docker Hub. The output tag should include port for self-hosted
+	// registries, but we don't enforce this — it's a deployment concern.
 }
