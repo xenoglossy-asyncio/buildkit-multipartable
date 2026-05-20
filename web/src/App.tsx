@@ -3,6 +3,7 @@ import { listBuilds, setApiKey, type Build } from "./lib/api";
 import SubmitBuild from "./components/SubmitBuild";
 import BuildList from "./components/BuildList";
 import BuildDetail from "./components/BuildDetail";
+import AdminPanel from "./components/AdminPanel";
 import "./App.css";
 
 function App() {
@@ -11,6 +12,7 @@ function App() {
   const [apiKey, setApiKeyState] = useState(
     () => localStorage.getItem("dtbuild_api_key") || "",
   );
+  const [showAdmin, setShowAdmin] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -30,27 +32,60 @@ function App() {
   return (
     <div className="app">
       <header>
-        <h1>dtbuildkit</h1>
-        <div className="apikey-box">
-          <input
-            type="password"
-            placeholder="API key"
-            value={apiKey}
-            onChange={(e) => {
-              setApiKeyState(e.target.value);
-              setApiKey(e.target.value);
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <h1>dtbuildkit</h1>
+          <button
+            onClick={() => setShowAdmin(!showAdmin)}
+            style={{
+              fontSize: 11,
+              padding: "3px 10px",
+              background: showAdmin ? "#f85149" : "#30363d",
             }}
-          />
+          >
+            {showAdmin ? "Exit Admin" : "Admin"}
+          </button>
         </div>
+        {!showAdmin && (
+          <div className="apikey-box">
+            <input
+              type="password"
+              placeholder="API key"
+              value={apiKey}
+              onChange={(e) => {
+                setApiKeyState(e.target.value);
+                setApiKey(e.target.value);
+              }}
+            />
+          </div>
+        )}
       </header>
       <main>
-        <SubmitBuild onSubmitted={(b) => { setSelected(b.id); refresh(); }} />
-        <div>
-          <BuildList builds={builds} selected={selected} onSelect={setSelected} onRefresh={refresh} />
-          {selected && (
-            <BuildDetail id={selected} onClose={() => setSelected(null)} />
-          )}
-        </div>
+        {showAdmin ? (
+          <AdminPanel />
+        ) : (
+          <>
+            <SubmitBuild
+              onSubmitted={(b) => {
+                setSelected(b.id);
+                refresh();
+              }}
+            />
+            <div>
+              <BuildList
+                builds={builds}
+                selected={selected}
+                onSelect={setSelected}
+                onRefresh={refresh}
+              />
+              {selected && (
+                <BuildDetail
+                  id={selected}
+                  onClose={() => setSelected(null)}
+                />
+              )}
+            </div>
+          </>
+        )}
       </main>
     </div>
   );

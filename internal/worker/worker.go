@@ -2,7 +2,7 @@ package worker
 
 import (
 	"archive/tar"
-	"bufio"
+	
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -259,24 +259,11 @@ func (w *Worker) executeBuild(ctx context.Context, build *domain.Build, contextD
 		BuildArgs:  build.Args,
 	}
 
-	pr, pw := io.Pipe()
-	errCh := make(chan error, 1)
-	go func() {
-		defer pw.Close()
-		_, err := bc.Build(buildCtx, opts, pw)
-		errCh <- err
-	}()
+		_, err = bc.Build(buildCtx, opts, func(line string) {
+			w.sendLog(build.ID, line)
+		})
 
-	scanner := bufio.NewScanner(pr)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-		w.sendLog(build.ID, line)
-	}
-
-	if err := <-errCh; err != nil {
+		if err != nil {
 		if buildCtx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("build timed out after %v", timeout)
 		}

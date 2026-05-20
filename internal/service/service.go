@@ -235,11 +235,7 @@ func (s *BuildService) QueueLen() int { return s.queue.Len() }
 
 // AppendLog appends a log line to a build.
 func (s *BuildService) AppendLog(id string, line string) error {
-	b, err := s.repo.Get(id)
-	if err != nil {
-		return err
-	}
-	return s.repo.UpdateStatus(id, b.Status, b.WorkerID, line, "")
+	return s.repo.UpdateStatus(id, "", "", line, "")
 }
 
 // WorkerService handles worker lifecycle.

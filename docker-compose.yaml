@@ -51,10 +51,10 @@ services:
   server:
     build: .
     container_name: dtbuild-server
-    command: [ "/app/dtbuild-server", "--addr=:8640", "--db=./data/dtbuildkit.db", "--blobs=/data/blobs" ]
+    command: [ "/app/dtbuild-server", "--addr=:8640", "--db=postgres://dtbuild:dtbuild@postgres:5432/dtbuildkit?sslmode=disable", "--blobs=/data/blobs" ]
     environment:
       <<: *s3-env
-      DTBUILD_ADMIN_KEY: test123
+      DTBUILD_ADMIN_KEY: fucking-admin-dtbuildkit
     ports:
       - "8640:8640"
     volumes:

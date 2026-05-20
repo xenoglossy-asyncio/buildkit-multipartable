@@ -36,11 +36,17 @@ func (r *Result) add(what, msg string) {
 func Single(in BuildInput) *Result {
 	r := &Result{}
 
-	if strings.TrimSpace(in.Dockerfile) == "" {
+	// Dockerfile content may be just a filename ("Dockerfile") when submitted
+	// from the web UI — the actual content is inside the context tar.
+	// Only validate if it looks like actual Dockerfile content (contains FROM or newlines).
+	content := strings.TrimSpace(in.Dockerfile)
+	if content == "" {
 		r.add("dockerfile", "empty")
-	} else {
-		validateDockerfile(in.Dockerfile, r)
+	} else if strings.Contains(content, "\n") || strings.HasPrefix(strings.ToUpper(content), "FROM ") {
+		validateDockerfile(content, r)
 	}
+	// else: it's probably just a filename like "Dockerfile" — skip validation,
+	// the real content is in the context tar.
 
 	if in.ImageTag == "" {
 		r.add("image_tag", "empty")
