@@ -1,23 +1,44 @@
 """dtbuildkit user-facing service."""
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from routers import auth, builds, dashboard, admin
+from services.cache import cache, CACHE_TTL
 
 BUILD_SERVICE = os.getenv("BUILD_SERVICE", "http://server:8640")
-ADMIN_KEY = os.getenv("DTBUILD_ADMIN_KEY", "fucking-admin-dtbuildkit")
+
+
+async def refresh_loop(client: httpx.AsyncClient):
+    """Refresh all cached stats every CACHE_TTL seconds."""
+    while True:
+        await asyncio.sleep(CACHE_TTL)
+        try:
+            await dashboard.refresh_cache(client)
+        except Exception:
+            pass
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import httpx
-    app.state.build_client = httpx.AsyncClient(base_url=BUILD_SERVICE, timeout=60.0)
+    client = httpx.AsyncClient(base_url=BUILD_SERVICE, timeout=30.0)
+    app.state.build_client = client
+
+    # Connect Redis
+    await cache.connect()
+
+    # Start background cache refresh
+    task = asyncio.create_task(refresh_loop(client))
+
     yield
-    await app.state.build_client.aclose()
+
+    task.cancel()
+    await client.aclose()
 
 
 app = FastAPI(

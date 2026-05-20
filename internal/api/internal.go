@@ -182,7 +182,7 @@ func (s *Server) userStats(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		uid := b.UserID
-		if uid == "" {
+		if uid == "" || strings.Contains(uid, "{") {
 			uid = "anonymous"
 		}
 		if _, ok := users[uid]; !ok {
