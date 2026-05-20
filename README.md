@@ -8,7 +8,7 @@ of container images per day — one (or more) per evaluation datapoint.
 
 ```
 ┌──────────────────────┐  /api/*   ┌───────────────────────────┐  HTTP/JSON  ┌──────────────────────────────┐
-│  Web (nginx) :3000   │──────────▶│  Client (FastAPI) :8100   │───────────▶│  Build Engine (Go) :8640      │
+│  Web (nginx) :3000   │──────────▶│  API (FastAPI) :8100      │───────────▶│  Build Engine (Go) :8640      │
 │                      │           │                           │            │                              │
 │  React SPA           │           │  POST /api/auth/login     │            │  POST /api/v1/builds         │
 │  Static assets       │           │  GET  /api/v1/stats       │            │  POST /api/v1/builds/bulk    │
@@ -42,7 +42,7 @@ of container images per day — one (or more) per evaluation datapoint.
 | Service | Port | Stack | Role |
 |---------|------|-------|------|
 | **Web** | 3000 | nginx:alpine | SPA serving, reverse proxy `/api/*` to FastAPI, SSE passthrough |
-| **Client** | 8100 | FastAPI (Python 3.13) | Auth, dashboard, admin, S3 context upload, API proxy |
+| **API** | 8100 | FastAPI (Python 3.13) | Auth, dashboard, admin, S3 context upload, API proxy |
 | **Server** | 8640 | Go + chi | Build engine: CRUD, scheduling, worker management |
 | **Worker** | — | Go + buildkitd | Executes `buildctl build`, downloads context from S3 |
 | **Registry** | 5000 | distribution/registry:2 | OCI image storage, S3-backed |
@@ -50,7 +50,7 @@ of container images per day — one (or more) per evaluation datapoint.
 | **Redis** | 6379 | redis:7 | Stats cache (30s TTL, refreshed by FastAPI) |
 
 The **Web** service (nginx) serves the React SPA and proxies all `/api/*` requests to FastAPI.
-The **Client** (FastAPI) handles auth, caching, and uploads contexts directly to S3 before sending
+The **API** (FastAPI) handles auth, caching, and uploads contexts directly to S3 before sending
 JSON metadata to the Go server. The **Server** (Go) is a pure internal build engine with no auth.
 Workers download contexts from S3 and talk directly to the Go server.
 
@@ -58,63 +58,66 @@ Workers download contexts from S3 and talk directly to the Go server.
 
 ```
 dtbuildkit/
-├── cmd/
-│   ├── dtbuild/                 # CLI: submit, status, logs, list
-│   ├── dtbuild-server/          # Go build engine entry
-│   └── dtbuild-worker/          # Worker daemon entry
-├── internal/
-│   ├── api/                     # HTTP handlers, SSE broker, metrics, admin
-│   ├── buildkit/                # buildctl subprocess wrapper
-│   ├── domain/                  # Shared types (Build, Worker, Quota, Status)
-│   ├── fingerprint/             # Dockerfile content fingerprint
-│   ├── oss/                     # S3/MinIO blob store
-│   ├── queue/                   # Priority task queue
-│   ├── quota/                   # Per-user resource limits
-│   ├── repo/                    # PostgreSQL persistence layer
-│   ├── scheduler/               # Consistent hash ring + affinity scoring
-│   ├── service/                 # Business logic (BuildService, WorkerService)
-│   ├── validate/                # Dockerfile + tag validation
-│   └── worker/                  # Build execution loop
-├── client/                      # User-facing service
-│   ├── main.py                  # FastAPI app + lifespan
-│   ├── pyproject.toml           # uv dependencies
-│   ├── Dockerfile               # Python 3.13-alpine
+├── server/                         # Go build engine
+│   ├── cmd/
+│   │   ├── dtbuild/                # CLI: submit, status, logs, list
+│   │   ├── dtbuild-server/         # Go build engine entry
+│   │   └── dtbuild-worker/         # Worker daemon entry
+│   ├── internal/
+│   │   ├── api/                    # HTTP handlers, SSE broker, metrics, admin
+│   │   ├── buildkit/               # buildctl subprocess wrapper
+│   │   ├── domain/                 # Shared types (Build, Worker, Quota, Status)
+│   │   ├── fingerprint/            # Dockerfile content fingerprint
+│   │   ├── oss/                    # S3/MinIO blob store
+│   │   ├── queue/                  # Priority task queue
+│   │   ├── quota/                  # Per-user resource limits
+│   │   ├── repo/                   # PostgreSQL persistence layer
+│   │   ├── scheduler/              # Consistent hash ring + affinity scoring
+│   │   ├── service/                # Business logic (BuildService, WorkerService)
+│   │   ├── validate/               # Dockerfile + tag validation
+│   │   └── worker/                 # Build execution loop
+│   ├── testdata/                   # Sample Dockerfiles
+│   ├── go.mod
+│   ├── go.sum
+│   └── Dockerfile                  # Go multi-stage build
+├── api/                            # FastAPI gateway
+│   ├── main.py                     # FastAPI app + lifespan
+│   ├── pyproject.toml              # uv dependencies
+│   ├── Dockerfile                  # Python 3.13-alpine
 │   ├── routers/
-│   │   ├── auth.py              # POST /api/auth/login
-│   │   ├── builds.py            # Build submission proxy
-│   │   ├── dashboard.py         # Stats endpoints (Redis-cached)
-│   │   └── admin.py             # Admin: quotas, keys, health
-│   ├── services/
-│   │   ├── buildkit.py          # HTTP client to Go server
-│   │   ├── cache.py             # Redis cache wrapper
-│   │   └── s3.py                # S3/MinIO client for context upload
-│   └── web/                     # React frontend
-│       ├── Dockerfile           # Multi-stage: Node 22 → nginx:alpine
-│       ├── nginx.conf           # Reverse proxy + SPA routing
-│       └── src/
-│           ├── App.tsx          # Root with tabs (Dashboard|History|Submit|Builds|Admin)
-│           ├── components/
-│           │   ├── Login.tsx    # API key login page
-│           │   ├── Dashboard.tsx
-│           │   ├── History.tsx  # Time-range stats + charts
-│           │   ├── SubmitBuild.tsx  # Single + bulk submission
-│           │   ├── BuildList.tsx    # Paginated build list
-│           │   ├── BuildDetail.tsx  # Live SSE logs
-│           │   └── AdminPanel.tsx   # Overview + Users management
-│           └── lib/
-│               ├── api.ts       # REST API client
-│               ├── tar.ts       # Browser-side tar + gzip
-│               └── useCache.ts  # sessionStorage cache hook
+│   │   ├── auth.py                 # POST /api/auth/login
+│   │   ├── builds.py              # Build submission proxy
+│   │   ├── dashboard.py           # Stats endpoints (Redis-cached)
+│   │   └── admin.py               # Admin: quotas, keys, health
+│   └── services/
+│       ├── buildkit.py             # HTTP client to Go server
+│       ├── cache.py                # Redis cache wrapper
+│       └── s3.py                   # S3/MinIO client for context upload
+├── web/                            # React frontend
+│   ├── Dockerfile                  # Multi-stage: Node 22 → nginx:alpine
+│   ├── nginx.conf                  # Reverse proxy + SPA routing
+│   └── src/
+│       ├── App.tsx                 # Root with tabs
+│       ├── components/
+│       │   ├── Login.tsx           # API key login page
+│       │   ├── Dashboard.tsx
+│       │   ├── History.tsx         # Time-range stats + charts
+│       │   ├── SubmitBuild.tsx     # Single + bulk submission
+│       │   ├── BuildList.tsx       # Paginated build list
+│       │   ├── BuildDetail.tsx     # Live SSE logs
+│       │   └── AdminPanel.tsx      # Overview + Users management
+│       └── lib/
+│           ├── api.ts              # REST API client
+│           ├── tar.ts              # Browser-side tar + gzip
+│           └── useCache.ts         # sessionStorage cache hook
 ├── deploy/
-│   ├── buildkitd.toml           # BuildKit daemon config
-│   ├── registry-config.yml      # Registry S3 backend config
-│   ├── docker-config/           # Docker auth for buildkitd
-│   ├── k8s/                     # Kubernetes manifests
-│   │   └── ack/                 # ACK-specific configs
-│   └── htpasswd                 # Registry auth (dev)
-├── docker-compose.yaml          # Full dev stack
-├── Dockerfile                   # Go multi-stage build
-└── testdata/                    # Sample Dockerfiles
+│   ├── buildkitd.toml              # BuildKit daemon config
+│   ├── registry-config.yml         # Registry S3 backend config
+│   ├── docker-config/              # Docker auth for buildkitd
+│   ├── k8s/                        # Kubernetes manifests
+│   │   └── ack/                    # ACK-specific configs
+│   └── htpasswd                    # Registry auth (dev)
+└── docker-compose.yaml             # Full dev stack
 ```
 
 ## Quick Start
@@ -132,15 +135,15 @@ docker compose up -d
 docker network connect really-dtbuildkit_default minio
 
 # 3. Frontend dev (Vite HMR, no rebuild needed)
-cd client/web
+cd web
 npm install
 npm run dev          # http://localhost:5173
 
 # 4. Build CLI
-go build -o dtbuild ./cmd/dtbuild
+cd server && go build -o dtbuild ./cmd/dtbuild
 
 # 5. Submit a build
-./dtbuild submit ./testdata/sample --tag registry:80/test:v1
+./dtbuild submit ./server/testdata/sample --tag registry:80/test:v1
 # Or: drag & drop folder in web UI
 
 # 6. Check status & logs
@@ -196,7 +199,7 @@ curl http://localhost:8640/metrics
 | `GET` | `/metrics` | Prometheus |
 | `GET` | `/healthz` | Health check |
 
-### FastAPI Client (`:8100` direct, proxied via nginx `:3000` — OpenAPI at `/docs`)
+### FastAPI API Gateway (`:8100` direct, proxied via nginx `:3000` — OpenAPI at `/docs`)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -247,7 +250,7 @@ dtbuild-server \
 | `S3_BUCKET` | `dtbuildkit` | Context bucket |
 | `DTBUILD_ADMIN_KEY` | — | Admin key |
 
-### FastAPI Client
+### FastAPI API Gateway
 
 | Env | Default | Description |
 |-----|---------|-------------|
