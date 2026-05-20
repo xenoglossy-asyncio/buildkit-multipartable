@@ -30,25 +30,23 @@ async def get_build_logs(request: Request, build_id: str) -> str:
     return resp.text
 
 
-async def submit_build(request: Request, context: bytes, dockerfile: str, image_tag: str, args: dict | None = None) -> dict:
-    import io
-    form = {}
-    form["dockerfile"] = dockerfile
-    form["image_tag"] = image_tag
+async def submit_build(request: Request, build_id: str, context_key: str, dockerfile: str, image_tag: str, args: dict | None = None) -> dict:
+    payload = {
+        "build_id": build_id,
+        "context_key": context_key,
+        "dockerfile": dockerfile,
+        "image_tag": image_tag,
+    }
     if args:
-        for k, v in args.items():
-            form[f"arg.{k}"] = v
-    files = {"context": ("context.tar.gz", io.BytesIO(context), "application/x-tar")}
-    resp = await build_client(request).post("/api/v1/builds", data=form, files=files)
+        payload["args"] = args
+    resp = await build_client(request).post("/api/v1/builds", json=payload)
     resp.raise_for_status()
     return resp.json()
 
 
-async def submit_bulk(request: Request, context: bytes, tag_prefix: str) -> dict:
-    import io
-    files = {"context": ("context.tar.gz", io.BytesIO(context), "application/x-gtar")}
-    data = {"tag_prefix": tag_prefix}
-    resp = await build_client(request).post("/api/v1/builds/bulk", data=data, files=files)
+async def submit_bulk(request: Request, context_key: str, tag_prefix: str) -> dict:
+    payload = {"context_key": context_key, "tag_prefix": tag_prefix}
+    resp = await build_client(request).post("/api/v1/builds/bulk", json=payload)
     resp.raise_for_status()
     return resp.json()
 

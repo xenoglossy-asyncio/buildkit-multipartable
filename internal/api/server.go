@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -115,11 +116,11 @@ func (s *Server) setupRoutes() {
 
 		// Stats (used by FastAPI dashboard)
 		r.Get("/stats", s.publicStats)
-			r.Get("/stats/daily", s.dailyStats)
-			r.Get("/stats/averages", s.averageStats)
-			r.Get("/stats/users", s.userStats)
-			r.Get("/stats/running", s.runningBuilds)
-		})
+		r.Get("/stats/daily", s.dailyStats)
+		r.Get("/stats/averages", s.averageStats)
+		r.Get("/stats/users", s.userStats)
+		r.Get("/stats/running", s.runningBuilds)
+	})
 
 	s.router.Get("/metrics", metricsHandler)
 	s.router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +179,51 @@ func (s *Server) serveBlob(w http.ResponseWriter, r *http.Request) {
 // ---- Build handlers (thin wrappers) ----
 
 func (s *Server) submitBuild(w http.ResponseWriter, r *http.Request) {
+	ct := r.Header.Get("Content-Type")
+
+	// JSON path: context already in S3, receive metadata only.
+	if strings.HasPrefix(ct, "application/json") {
+		var req struct {
+			BuildID        string            `json:"build_id"`
+			ContextKey     string            `json:"context_key"`
+			Dockerfile     string            `json:"dockerfile"`
+			ImageTag       string            `json:"image_tag"`
+			TimeoutSeconds int               `json:"timeout_seconds"`
+			Args           map[string]string `json:"args"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.ContextKey == "" {
+			http.Error(w, "missing context_key", http.StatusBadRequest)
+			return
+		}
+		if req.Dockerfile == "" {
+			req.Dockerfile = "Dockerfile"
+		}
+		if req.BuildID == "" {
+			req.BuildID = uuid.New().String()
+		}
+		timeout := req.TimeoutSeconds
+		if timeout <= 0 {
+			timeout = 600
+		}
+		userID := r.Header.Get("X-Api-Key")
+
+		build, err := s.buildSvc.SubmitBuild(req.BuildID, req.ContextKey, []byte(req.Dockerfile), req.ImageTag, userID, timeout, req.Args)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(build)
+		return
+	}
+
+	// Multipart path: receive file and store to S3 (CLI backward compat).
 	if err := r.ParseMultipartForm(100 << 20); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -219,33 +265,72 @@ func (s *Server) submitBuild(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) submitBulkBuild(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(500 << 20); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	contextFile, _, err := r.FormFile("context")
-	if err != nil {
-		http.Error(w, "missing context", http.StatusBadRequest)
-		return
-	}
-	defer contextFile.Close()
+	ct := r.Header.Get("Content-Type")
 
-	tagPrefix := r.FormValue("tag_prefix")
-	if tagPrefix == "" {
-		http.Error(w, "missing tag_prefix", http.StatusBadRequest)
-		return
+	var data []byte
+	var tagPrefix string
+	var userID string
+
+	// JSON path: context already in S3, download from S3 for parsing.
+	if strings.HasPrefix(ct, "application/json") {
+		var req struct {
+			ContextKey string `json:"context_key"`
+			TagPrefix  string `json:"tag_prefix"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.ContextKey == "" {
+			http.Error(w, "missing context_key", http.StatusBadRequest)
+			return
+		}
+		tagPrefix = req.TagPrefix
+		if tagPrefix == "" {
+			http.Error(w, "missing tag_prefix", http.StatusBadRequest)
+			return
+		}
+		userID = r.Header.Get("X-Api-Key")
+
+		// Download bulk context from S3 for Dockerfile discovery
+		var buf bytes.Buffer
+		if _, err := s.blobs.Get(req.ContextKey, &buf); err != nil {
+			http.Error(w, "fetch bulk context from storage: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		data = buf.Bytes()
+	} else {
+		// Multipart path (CLI backward compat).
+		if err := r.ParseMultipartForm(500 << 20); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		contextFile, _, err := r.FormFile("context")
+		if err != nil {
+			http.Error(w, "missing context", http.StatusBadRequest)
+			return
+		}
+		defer contextFile.Close()
+
+		tagPrefix = r.FormValue("tag_prefix")
+		if tagPrefix == "" {
+			http.Error(w, "missing tag_prefix", http.StatusBadRequest)
+			return
+		}
+		userID = r.Header.Get("X-Api-Key")
+
+		var readErr error
+		data, readErr = io.ReadAll(contextFile)
+		if readErr != nil {
+			http.Error(w, "read context: "+readErr.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
+
 	if !strings.HasSuffix(tagPrefix, "/") && !strings.HasSuffix(tagPrefix, "-") {
 		tagPrefix += "/"
 	}
 
-	data, err := io.ReadAll(contextFile)
-	if err != nil {
-		http.Error(w, "read context: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	userID := r.Header.Get("X-Api-Key")
 	builds, err := s.buildSvc.SubmitBulkBuild(data, tagPrefix, userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

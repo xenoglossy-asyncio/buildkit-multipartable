@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from routers import auth, builds, dashboard, admin
+from services import s3
 from services.cache import cache, CACHE_TTL
 
 BUILD_SERVICE = os.getenv("BUILD_SERVICE", "http://server:8640")
@@ -28,6 +29,9 @@ async def refresh_loop(client: httpx.AsyncClient):
 async def lifespan(app: FastAPI):
     client = httpx.AsyncClient(base_url=BUILD_SERVICE, timeout=30.0)
     app.state.build_client = client
+
+    # Initialize S3 client for direct context upload
+    s3.init()
 
     # Connect Redis
     await cache.connect()

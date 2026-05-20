@@ -1,8 +1,10 @@
 """Build submission, status, logs."""
-import io
+import asyncio
+import uuid
+
 from fastapi import APIRouter, Request, UploadFile, Form, HTTPException, Query
 
-from services import buildkit
+from services import buildkit, s3
 
 router = APIRouter(prefix="/api/v1", tags=["builds"])
 
@@ -15,8 +17,10 @@ async def submit_build(
     image_tag: str = Form(default=""),
 ):
     data = await context.read()
+    build_id = str(uuid.uuid4())
     try:
-        result = await buildkit.submit_build(request, data, dockerfile, image_tag)
+        context_key = await asyncio.to_thread(s3.upload_context, data, build_id)
+        result = await buildkit.submit_build(request, build_id, context_key, dockerfile, image_tag)
         return result
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -30,7 +34,8 @@ async def submit_bulk(
 ):
     data = await context.read()
     try:
-        result = await buildkit.submit_bulk(request, data, tag_prefix)
+        context_key = await asyncio.to_thread(s3.upload_bulk_context, data)
+        result = await buildkit.submit_bulk(request, context_key, tag_prefix)
         return result
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))

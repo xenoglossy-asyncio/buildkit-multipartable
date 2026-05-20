@@ -2,7 +2,6 @@ package worker
 
 import (
 	"archive/tar"
-	
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -19,6 +18,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 
 	"github.com/xenoglossy/dtbuildkit/internal/buildkit"
 	"github.com/xenoglossy/dtbuildkit/internal/domain"
@@ -37,6 +38,10 @@ type Worker struct {
 
 	mu        sync.RWMutex
 	cacheKeys []string // instruction hashes for cache-affinity routing
+
+	// S3 direct download (optional, falls back to HTTP if nil)
+	s3Client *minio.Client
+	s3Bucket string
 }
 
 // NewWorker creates a worker instance.
@@ -56,6 +61,8 @@ func NewWorker(serverURL, buildkitAddr, workDir, cacheRegistry string) *Worker {
 // Run starts the worker loop.
 func (w *Worker) Run(ctx context.Context) error {
 	slog.Info("worker starting", "id", w.ID, "server", w.ServerURL)
+
+	w.initS3()
 
 	if err := w.ensureBuildkitd(ctx); err != nil {
 		return fmt.Errorf("buildkitd check: %w", err)
@@ -100,6 +107,42 @@ func (w *Worker) ensureBuildkitd(ctx context.Context) error {
 	}
 	slog.Info("buildkitd connected", "addr", w.BuildkitAddr)
 	return nil
+}
+
+// initS3 initializes the S3 client for direct context download.
+// If S3_ENDPOINT is not set, the worker falls back to HTTP download via the server.
+func (w *Worker) initS3() {
+	endpoint := os.Getenv("S3_ENDPOINT")
+	if endpoint == "" {
+		slog.Info("S3 not configured, using HTTP download via server")
+		return
+	}
+
+	accessKey := os.Getenv("S3_ACCESS_KEY")
+	if accessKey == "" {
+		accessKey = "admin"
+	}
+	secretKey := os.Getenv("S3_SECRET_KEY")
+	if secretKey == "" {
+		secretKey = "password"
+	}
+	w.s3Bucket = os.Getenv("S3_BUCKET")
+	if w.s3Bucket == "" {
+		w.s3Bucket = "dtbuildkit"
+	}
+	useSSL := strings.ToLower(os.Getenv("S3_USE_SSL")) == "true"
+
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure: useSSL,
+	})
+	if err != nil {
+		slog.Warn("failed to create S3 client, using HTTP fallback", "error", err)
+		return
+	}
+
+	w.s3Client = client
+	slog.Info("S3 direct download enabled", "endpoint", endpoint, "bucket", w.s3Bucket)
 }
 
 func (w *Worker) getCacheKeys() []string {
@@ -259,15 +302,14 @@ func (w *Worker) executeBuild(ctx context.Context, build *domain.Build, contextD
 		BuildArgs:  build.Args,
 	}
 
-		_, err = bc.Build(buildCtx, opts, func(line string) {
-			w.sendLog(build.ID, line)
-		})
+	_, err = bc.Build(buildCtx, opts, func(line string) {
+		w.sendLog(build.ID, line)
+	})
 
-		if err != nil {
+	if err != nil {
 		if buildCtx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("build timed out after %v", timeout)
 		}
-		// Check if cancelled
 		if w.isBuildCancelled(build.ID) {
 			return fmt.Errorf("build cancelled")
 		}
@@ -291,6 +333,27 @@ func (w *Worker) isBuildCancelled(buildID string) bool {
 }
 
 func (w *Worker) downloadContext(buildID, dest string) error {
+	if w.s3Client != nil {
+		key := "contexts/" + buildID + ".tar.gz"
+		obj, err := w.s3Client.GetObject(context.Background(), w.s3Bucket, key, minio.GetObjectOptions{})
+		if err == nil {
+			// Verify the object is accessible by reading stat
+			if _, statErr := obj.Stat(); statErr == nil {
+				slog.Debug("downloading context from S3", "key", key)
+				err = extractTarGz(obj, dest)
+				obj.Close()
+				return err
+			}
+			obj.Close()
+			slog.Warn("S3 object stat failed, falling back to HTTP", "key", key)
+		} else {
+			slog.Warn("S3 GetObject failed, falling back to HTTP", "key", key, "error", err)
+		}
+	}
+	return w.downloadContextHTTP(buildID, dest)
+}
+
+func (w *Worker) downloadContextHTTP(buildID, dest string) error {
 	resp, err := w.HTTPClient.Get(w.ServerURL + "/api/v1/blobs/contexts/" + buildID + ".tar.gz")
 	if err != nil {
 		return fmt.Errorf("fetch context: %w", err)

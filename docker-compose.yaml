@@ -76,15 +76,17 @@ services:
     ports:
       - "3000:3000"
     environment:
+      <<: *s3-env
       BUILD_SERVICE: http://server:8640
       DTBUILD_ADMIN_KEY: fucking-admin-dtbuildkit
+      REDIS_URL: redis://redis:6379
     volumes:
       - ./client:/app
     depends_on:
       - server
     restart: unless-stopped
 
-  # ---- Workers (2 instances) ----
+  # ---- Workers ----
   worker:
     build: .
     container_name: dtbuild-worker
@@ -94,6 +96,8 @@ services:
       - "--buildkit=unix:///run/buildkit/buildkitd.sock"
       - "--workdir=/data/worker"
       - "--cache-registry=registry:80/cache"
+    environment:
+      <<: *s3-env
     volumes:
       - worker-data:/data
       - buildkit-sock:/run/buildkit
@@ -113,6 +117,8 @@ services:
       - "--buildkit=unix:///run/buildkit/buildkitd.sock"
       - "--workdir=/data/worker-2"
       - "--cache-registry=registry:80/cache"
+    environment:
+      <<: *s3-env
     volumes:
       - worker-data-2:/data
       - buildkit-sock:/run/buildkit
@@ -123,7 +129,6 @@ services:
       - registry
     restart: unless-stopped
 
-
   worker-3:
     build: .
     container_name: dtbuild-worker-3
@@ -133,6 +138,8 @@ services:
       - "--buildkit=unix:///run/buildkit/buildkitd.sock"
       - "--workdir=/data/worker-3"
       - "--cache-registry=registry:80/cache"
+    environment:
+      <<: *s3-env
     volumes:
       - worker-data-3:/data
       - buildkit-sock:/run/buildkit
@@ -152,6 +159,8 @@ services:
       - "--buildkit=unix:///run/buildkit/buildkitd.sock"
       - "--workdir=/data/worker-4"
       - "--cache-registry=registry:80/cache"
+    environment:
+      <<: *s3-env
     volumes:
       - worker-data-4:/data
       - buildkit-sock:/run/buildkit
@@ -171,6 +180,8 @@ services:
       - "--buildkit=unix:///run/buildkit/buildkitd.sock"
       - "--workdir=/data/worker-5"
       - "--cache-registry=registry:80/cache"
+    environment:
+      <<: *s3-env
     volumes:
       - worker-data-5:/data
       - buildkit-sock:/run/buildkit

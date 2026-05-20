@@ -67,6 +67,23 @@ spec:
             - "--buildkit=unix:///run/buildkit/buildkitd.sock"
             - "--workdir=/data/worker"
             - "--cache-registry=registry-gateway:5000/cache"
+          env:
+            - name: S3_ENDPOINT
+              value: "minio:9000"
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dtbuild-s3
+                  key: access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dtbuild-s3
+                  key: secret-key
+            - name: S3_BUCKET
+              value: "dtbuildkit"
+            - name: S3_USE_SSL
+              value: "false"
           resources:
             requests:
               cpu: "250m"

@@ -63,6 +63,25 @@ spec:
                 secretKeyRef:
                   name: dtbuild-auth
                   key: api-key
+            - name: S3_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: dtbuild-s3
+                  key: endpoint
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dtbuild-s3
+                  key: access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dtbuild-s3
+                  key: secret-key
+            - name: S3_BUCKET
+              value: "dtbuildkit"
+            - name: S3_USE_SSL
+              value: "false"
           resources:
             requests: { cpu: "250m", memory: "256Mi" }
             limits: { cpu: "1", memory: "1Gi" }
