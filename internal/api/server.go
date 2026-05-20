@@ -75,6 +75,7 @@ func (s *Server) setupRoutes() {
 	s.router.Use(middleware.Logger)
 	s.router.Use(middleware.Recoverer)
 	s.router.Use(middleware.Timeout(30 * time.Second))
+	s.router.Use(authMiddleware)
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Post("/builds", s.submitBuild)

@@ -82,24 +82,30 @@ dtbuildkit/
 │   ├── dtbuild-server/       # API + scheduler
 │   └── dtbuild-worker/       # Worker daemon
 ├── internal/
-│   ├── api/                  # HTTP handlers, SSE broker, metrics
+│   ├── api/                  # HTTP handlers, SSE broker, metrics, auth
 │   ├── buildkit/             # buildctl subprocess wrapper
 │   ├── fingerprint/          # Dockerfile content fingerprint
 │   ├── oss/                  # S3/MinIO blob store
 │   ├── scheduler/            # Consistent hash ring + affinity scoring
 │   ├── store/                # SQLite persistence (builds, workers)
 │   └── worker/               # Build execution loop
+├── web/                      # React frontend (Vite + TypeScript)
+│   └── src/
+│       ├── components/       # SubmitBuild, BuildList, BuildDetail
+│       └── lib/api.ts        # API client
 ├── deploy/
 │   ├── buildkitd.toml        # BuildKit daemon config
 │   ├── registry-config.yml   # Registry S3 backend config
 │   ├── gateway-nginx.conf    # Registry gateway nginx config
+│   ├── nginx-web.conf        # Web frontend nginx config (SPA + API proxy)
 │   ├── docker-config/        # Docker auth for buildkitd
 │   ├── k8s/                  # Kubernetes manifests
+│   │   ├── ack/              # ACK (Alibaba Cloud) specific configs
 │   │   ├── server.yaml       # API server + services
 │   │   ├── worker.yaml       # Worker Deployment + HPA
 │   │   └── registry.yaml     # Registry StatefulSet + Gateway
 │   └── htpasswd              # Registry auth (dev)
-├── docker-compose.yaml       # Dev environment
+├── docker-compose.yaml       # Dev environment (server + web + workers + registry)
 ├── Dockerfile                # Multi-stage build
 └── testdata/                 # Sample Dockerfiles for testing
 ```
@@ -131,10 +137,39 @@ go build -o dtbuild ./cmd/dtbuild
 ./dtbuild logs <build-id>
 ./dtbuild list
 
-# 7. Metrics
+# 7. Web UI
+open http://localhost:3000
+
+# 8. Metrics
 curl http://localhost:8640/metrics
 curl http://localhost:8640/healthz
 ```
+
+### Web Frontend Dev
+
+```bash
+cd web
+npm install
+npm run dev        # Vite HMR, proxies /api to localhost:8640
+```
+
+Build for production:
+
+```bash
+cd web
+npm run build      # outputs to web/dist/
+```
+
+### API Key Authentication
+
+Set `DTBUILD_API_KEYS` env on the server to enable auth:
+
+```bash
+DTBUILD_API_KEYS=key1,key2 ./dtbuild-server ...
+```
+
+CLI: set `DTBUILD_API_KEY` env or use `--api-key` flag.
+Web UI: enter key in the header input field (persisted in localStorage).
 
 ## Production Deployment (Kubernetes)
 

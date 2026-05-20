@@ -16,6 +16,27 @@ import (
 
 const defaultServer = "http://localhost:8640"
 
+func apiKey() string { return os.Getenv("DTBUILD_API_KEY") }
+
+func doGet(url string) (*http.Response, error) {
+	req, _ := http.NewRequest("GET", url, nil)
+	if k := apiKey(); k != "" {
+		req.Header.Set("X-Api-Key", k)
+	}
+	return http.DefaultClient.Do(req)
+}
+
+func doPost(url, contentType string, body io.Reader) (*http.Response, error) {
+	req, _ := http.NewRequest("POST", url, body)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if k := apiKey(); k != "" {
+		req.Header.Set("X-Api-Key", k)
+	}
+	return http.DefaultClient.Do(req)
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -137,7 +158,7 @@ func cmdSubmit(args []string) {
 
 	w.Close()
 
-	resp, err := http.Post(serverURL+"/api/v1/builds", w.FormDataContentType(), &formBody)
+	resp, err := doPost(serverURL+"/api/v1/builds", w.FormDataContentType(), &formBody)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -163,7 +184,7 @@ func cmdStatus(args []string) {
 		os.Exit(1)
 	}
 
-	resp, err := http.Get(serverURL + "/api/v1/builds/" + positional[0])
+	resp, err := doGet(serverURL + "/api/v1/builds/" + positional[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -194,7 +215,7 @@ func cmdLogs(args []string) {
 		os.Exit(1)
 	}
 
-	resp, err := http.Get(serverURL + "/api/v1/builds/" + positional[0] + "/logs")
+	resp, err := doGet(serverURL + "/api/v1/builds/" + positional[0] + "/logs")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -207,7 +228,7 @@ func cmdLogs(args []string) {
 func cmdList(args []string) {
 	serverURL := strings.TrimRight(getServerURL(args), "/")
 
-	resp, err := http.Get(serverURL + "/api/v1/builds")
+	resp, err := doGet(serverURL + "/api/v1/builds")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
