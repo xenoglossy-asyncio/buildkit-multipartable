@@ -259,6 +259,16 @@ func (w *Worker) executeBuild(ctx context.Context, build *domain.Build, contextD
 		BuildArgs:  build.Args,
 	}
 
+	// Use a goroutine to stream logs without blocking the pipe buffer
+	logCh := make(chan string, 256)
+	logDone := make(chan struct{})
+	go func() {
+		defer close(logDone)
+		for line := range logCh {
+			w.sendLog(build.ID, line)
+		}
+	}()
+
 	pr, pw := io.Pipe()
 	errCh := make(chan error, 1)
 	go func() {
@@ -267,16 +277,27 @@ func (w *Worker) executeBuild(ctx context.Context, build *domain.Build, contextD
 		errCh <- err
 	}()
 
-	scanner := bufio.NewScanner(pr)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
+	// Read from pipe in a separate goroutine, send to log channel
+	go func() {
+		scanner := bufio.NewScanner(pr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+			select {
+			case logCh <- line:
+			default:
+				// drop if log sender is too slow
+			}
 		}
-		w.sendLog(build.ID, line)
-	}
+		close(logCh)
+	}()
 
-	if err := <-errCh; err != nil {
+	err = <-errCh
+	<-logDone
+
+	if err != nil {
 		if buildCtx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("build timed out after %v", timeout)
 		}

@@ -108,11 +108,9 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions, logWriter io.Writ
 		}
 	}
 
-	ch := make(chan *client.SolveStatus)
-	done := make(chan struct{})
+	ch := make(chan *client.SolveStatus, 64)
 
 	go func() {
-		defer close(done)
 		for s := range ch {
 			if logWriter != nil {
 				writeStatus(logWriter, s)
@@ -121,7 +119,13 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions, logWriter io.Writ
 	}()
 
 	resp, err := bkClient.Solve(ctx, nil, solveOpt, ch)
-	<-done
+
+	// Drain remaining events with a timeout to prevent goroutine leak
+	go func() {
+		for range ch {
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
 
 	if err != nil {
 		return nil, fmt.Errorf("build failed: %w", err)
