@@ -9,6 +9,20 @@ x-s3-env: &s3-env
   S3_USE_SSL: "false"
 
 services:
+  # ---- PostgreSQL ----
+  postgres:
+    image: postgres:16-alpine
+    container_name: dtbuild-postgres
+    environment:
+      POSTGRES_USER: dtbuild
+      POSTGRES_PASSWORD: dtbuild
+      POSTGRES_DB: dtbuildkit
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
   # ---- Registry (S3-backed) ----
   registry:
     image: registry:2
@@ -37,7 +51,7 @@ services:
   server:
     build: .
     container_name: dtbuild-server
-    command: [ "/app/dtbuild-server", "--addr=:8640", "--db=/data/dtbuildkit.db", "--blobs=/data/blobs" ]
+    command: [ "/app/dtbuild-server", "--addr=:8640", "--db=postgres://dtbuild:dtbuild@postgres:5432/dtbuildkit?sslmode=disable", "--blobs=/data/blobs" ]
     environment:
       <<: *s3-env
     ports:
@@ -165,3 +179,4 @@ volumes:
   worker-data-3:
   worker-data-4:
   worker-data-5:
+  pg-data:
