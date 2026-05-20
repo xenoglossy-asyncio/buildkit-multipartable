@@ -25,28 +25,34 @@ func init() {
 	slog.Info("api key auth enabled", "keys", len(apiKeys))
 }
 
-// authMiddleware checks API keys. If no keys are configured, it's a no-op.
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth for health and metrics
-		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" {
+		// Always allow: health, metrics, stats, UI, admin, blobs
+		path := r.URL.Path
+		if path == "/healthz" || path == "/metrics" || path == "/" ||
+			strings.HasPrefix(path, "/ui") ||
+			strings.HasPrefix(path, "/api/v1/admin") ||
+			strings.HasPrefix(path, "/api/v1/blobs") ||
+			strings.HasPrefix(path, "/api/v1/stats") {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Skip auth for UI assets and admin (admin has its own middleware)
-		if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/ui") || strings.HasPrefix(r.URL.Path, "/api/v1/admin") {
-			next.ServeHTTP(w, r)
-			return
-		}
+
 		// If no keys configured, allow all
 		if len(apiKeys) == 0 {
 			next.ServeHTTP(w, r)
 			return
 		}
 
+		// Internal worker endpoints — skip auth (workers are trusted)
+		if strings.Contains(path, "/workers/") ||
+			strings.HasPrefix(path, "/api/v1/builds/next") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		key := r.Header.Get("X-Api-Key")
 		if key == "" {
-			// Try Bearer token
 			auth := r.Header.Get("Authorization")
 			if strings.HasPrefix(auth, "Bearer ") {
 				key = strings.TrimPrefix(auth, "Bearer ")

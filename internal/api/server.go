@@ -103,10 +103,45 @@ func (s *Server) setupRoutes() {
 
 	s.router.Route("/api/v1/admin", s.setupAdminRoutes)
 
+	s.router.Get("/api/v1/stats", s.publicStats)
+
 	s.router.Get("/metrics", metricsHandler)
 	s.router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
+	})
+}
+
+// GET /api/v1/stats — public endpoint, no auth required
+func (s *Server) publicStats(w http.ResponseWriter, r *http.Request) {
+	builds, _ := s.db.Builds.List(1000)
+	var total, succeeded, failed int64
+	for _, b := range builds {
+		total++
+		switch b.Status {
+		case domain.StatusSucceeded:
+			succeeded++
+		case domain.StatusFailed, domain.StatusTimedOut:
+			failed++
+		}
+	}
+	rate := 0.0
+	if total > 0 {
+		rate = float64(succeeded) / float64(total) * 100
+	}
+	pending, _ := s.db.Builds.CountPending()
+	active, _ := s.db.Workers.CountActive(30 * time.Second)
+	queueLen := s.buildSvc.QueueLen()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"total_builds":   total,
+		"succeeded":      succeeded,
+		"failed":         failed,
+		"success_rate":   rate,
+		"pending":        pending,
+		"active_workers": active,
+		"queue_depth":    queueLen,
 	})
 }
 
