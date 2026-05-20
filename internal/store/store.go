@@ -304,6 +304,38 @@ func (s *Store) GCCompletedBuilds(before time.Time) (int64, error) {
 	return result.RowsAffected()
 }
 
+// CreateBuilds inserts multiple builds in a single transaction.
+func (s *Store) CreateBuilds(builds []*Build) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`INSERT INTO builds (id, status, fingerprint, worker_id, context_key, dockerfile, image_tag, args, retry_count, max_retries, timeout_seconds, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	now := time.Now().UTC()
+	for _, b := range builds {
+		argsJSON, _ := json.Marshal(b.Args)
+		b.CreatedAt = now
+		b.UpdatedAt = now
+		_, err := stmt.Exec(b.ID, b.Status, b.Fingerprint, b.WorkerID, b.ContextKey, b.Dockerfile, b.ImageTag, string(argsJSON),
+			b.RetryCount, b.MaxRetries, b.TimeoutSeconds, b.CreatedAt.Format(time.RFC3339), b.UpdatedAt.Format(time.RFC3339))
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // --- Worker operations ---
 
 // UpsertWorker registers or updates a worker heartbeat.

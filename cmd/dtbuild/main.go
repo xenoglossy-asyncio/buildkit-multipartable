@@ -47,6 +47,8 @@ func main() {
 	switch cmd {
 	case "submit":
 		cmdSubmit(os.Args[2:])
+	case "submit-bulk":
+		cmdSubmitBulk(os.Args[2:])
 	case "status":
 		cmdStatus(os.Args[2:])
 	case "logs":
@@ -64,7 +66,7 @@ func printUsage() {
 	fmt.Println(`dtbuild — distributed BuildKit image builder
 
 Usage:
-  dtbuild submit <folder> [--tag <image:tag>] [--dockerfile <path>] [--server <url>] [--arg.<key>=<value>...]
+  dtbuild submit <folder> [--tag <image:tag>] [--dockerfile <path>] [--arg.<key>=<value>...]")
   dtbuild status <build-id> [--server <url>]
   dtbuild logs   <build-id> [--server <url>]
   dtbuild list   [--server <url>]`)
@@ -174,6 +176,63 @@ func cmdSubmit(args []string) {
 	}
 
 	fmt.Printf("Build submitted: %s\n", result["id"])
+}
+
+func cmdSubmitBulk(args []string) {
+	serverURL := strings.TrimRight(getServerURL(args), "/")
+	_, positional := parseArgs(args)
+
+	if len(positional) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: dtbuild submit-bulk <root-folder> [--tag-prefix <prefix>] [--dockerfile <name>]")
+		os.Exit(1)
+	}
+
+	folder := positional[0]
+	tagPrefix := kvFlag(args, "--tag-prefix")
+	if tagPrefix == "" {
+		tagPrefix = "registry:80/bulk"
+	}
+
+	// Create tar.gz of entire root folder
+	var buf bytes.Buffer
+	if err := tarGz(folder, &buf); err != nil {
+		fmt.Fprintf(os.Stderr, "error creating archive: %v\n", err)
+		os.Exit(1)
+	}
+
+	var formBody bytes.Buffer
+	w := multipart.NewWriter(&formBody)
+	ctxPart, _ := w.CreateFormFile("context", "context.tar.gz")
+	ctxPart.Write(buf.Bytes())
+	w.WriteField("tag_prefix", tagPrefix)
+	w.Close()
+
+	resp, err := doPost(serverURL+"/api/v1/builds/bulk", w.FormDataContentType(), &formBody)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(body))
+		os.Exit(1)
+	}
+
+	var result struct {
+		Count  int `json:"count"`
+		Builds []struct {
+			ID       string `json:"id"`
+			ImageTag string `json:"image_tag"`
+		} `json:"builds"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	fmt.Printf("Created %d builds:\n", result.Count)
+	for _, b := range result.Builds {
+		fmt.Printf("  %s  %s\n", b.ID, b.ImageTag)
+	}
 }
 
 func cmdStatus(args []string) {

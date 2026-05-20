@@ -56,7 +56,7 @@ export async function submitBuild(
   args?: Record<string, string>,
 ): Promise<Build> {
   const form = new FormData();
-  form.append("context", new Blob([context], { type: "application/x-tar" }), "context.tar.gz");
+  form.append("context", new Blob([context as any], { type: "application/x-tar" }), "context.tar.gz");
   form.append("dockerfile", dockerfile);
   form.append("image_tag", tag);
   if (args) {
@@ -65,6 +65,30 @@ export async function submitBuild(
     }
   }
   return fetchJSON("/builds", { method: "POST", body: form });
+}
+
+export interface BulkResult {
+  count: number;
+  builds: Build[];
+}
+
+export async function submitBulkBuild(
+  context: Uint8Array,
+  tagPrefix: string,
+): Promise<BulkResult> {
+  const form = new FormData();
+  form.append("context", new Blob([context as any], { type: "application/x-gtar" }), "context.tar.gz");
+  form.append("tag_prefix", tagPrefix);
+  const res = await fetch(BASE + "/builds/bulk", {
+    method: "POST",
+    body: form,
+    headers: apiKey() ? { "X-Api-Key": apiKey() } : {},
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+  return res.json();
 }
 
 export async function cancelBuild(id: string): Promise<void> {

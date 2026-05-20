@@ -79,6 +79,7 @@ func (s *Server) setupRoutes() {
 
 	s.router.Route("/api/v1", func(r chi.Router) {
 		r.Post("/builds", s.submitBuild)
+		r.Post("/builds/bulk", s.submitBulkBuild)
 		r.Get("/builds", s.listBuilds)
 		r.Get("/builds/next", s.getNextBuild) // replaces /pending + /claim
 		r.Get("/builds/{id}", s.getBuild)
