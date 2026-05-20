@@ -37,7 +37,8 @@ type Build struct {
 	MaxRetries     int               `json:"max_retries"`
 	TimeoutSeconds int               `json:"timeout_seconds"`
 	UserID         string            `json:"user_id,omitempty"`
-	Priority       int               `json:"priority"` // higher = sooner
+	Priority       int               `json:"priority"`
+	CacheHitRate   float64           `json:"cache_hit_rate"` // higher = sooner
 	CreatedAt      time.Time         `json:"created_at"`
 	UpdatedAt      time.Time         `json:"updated_at"`
 	CompletedAt    *time.Time        `json:"completed_at,omitempty"`

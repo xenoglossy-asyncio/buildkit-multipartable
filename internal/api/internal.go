@@ -305,25 +305,18 @@ func (s *Server) averageStats(w http.ResponseWriter, r *http.Request) {
 		avgSec = totalTime.Seconds() / float64(timed)
 	}
 
-	// Count cache hits vs misses from log output — only successful builds
-	var cacheHits, cacheMisses int
+	// Use stored cache_hit_rate from DB (computed at build completion)
+	var cacheRateSum float64
+	var cacheCount int
 	for _, b := range builds {
-		if b.Status != domain.StatusSucceeded || b.Logs == "" {
-			continue
-		}
-		lines := strings.Split(b.Logs, "\n")
-		for _, line := range lines {
-			if strings.Contains(line, "CACHED") {
-				cacheHits++
-			} else if strings.Contains(line, "DONE") && !strings.Contains(line, "CACHED") {
-				cacheMisses++
-			}
+		if b.Status == domain.StatusSucceeded && b.CacheHitRate > 0 {
+			cacheRateSum += b.CacheHitRate
+			cacheCount++
 		}
 	}
-	totalOps := cacheHits + cacheMisses
 	cacheRate := 0.0
-	if totalOps > 0 {
-		cacheRate = float64(cacheHits) / float64(totalOps) * 100
+	if cacheCount > 0 {
+		cacheRate = cacheRateSum / float64(cacheCount)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{

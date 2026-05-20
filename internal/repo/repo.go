@@ -70,6 +70,7 @@ func (d *DB) migrate() error {
 		instructions TEXT NOT NULL DEFAULT '[]',
 		user_id TEXT NOT NULL DEFAULT '',
 		priority INTEGER NOT NULL DEFAULT 0,
+		cache_hit_rate REAL NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL,
 		completed_at TEXT
@@ -131,19 +132,19 @@ func (r *BuildRepo) Get(id string) (*domain.Build, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return scanBuild(r.db.QueryRow(
-		`SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,created_at,updated_at,completed_at FROM builds WHERE id=$1`, id))
+		`SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,cache_hit_rate,created_at,updated_at,completed_at FROM builds WHERE id=$1`, id))
 }
 
 func (r *BuildRepo) List(limit int) ([]*domain.Build, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return listBuilds(r.db, `SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,created_at,updated_at,completed_at FROM builds ORDER BY created_at DESC LIMIT $1`, limit)
+	return listBuilds(r.db, `SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,cache_hit_rate,created_at,updated_at,completed_at FROM builds ORDER BY created_at DESC LIMIT $1`, limit)
 }
 
 func (r *BuildRepo) ListPending() ([]*domain.Build, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return listBuilds(r.db, `SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,created_at,updated_at,completed_at FROM builds WHERE status='pending' ORDER BY priority DESC, created_at ASC LIMIT 100`)
+	return listBuilds(r.db, `SELECT id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,logs,error,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,cache_hit_rate,created_at,updated_at,completed_at FROM builds WHERE status='pending' ORDER BY priority DESC, created_at ASC LIMIT 100`)
 }
 
 func (r *BuildRepo) UpdateStatus(id string, status domain.Status, workerID, logLine, errMsg string) error {
@@ -216,6 +217,13 @@ func (r *BuildRepo) GC(before time.Time) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+func (r *BuildRepo) SetCacheRate(id string, rate float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, err := r.db.Exec(`UPDATE builds SET cache_hit_rate=$1 WHERE id=$2`, rate, id)
+	return err
 }
 
 func (r *BuildRepo) CountUserDaily(userID string) (int64, error) {
@@ -293,9 +301,9 @@ func insertBuild(db *sql.DB, b *domain.Build) error {
 	now := time.Now().UTC()
 	b.CreatedAt = now
 	b.UpdatedAt = now
-	_, err := db.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+	_, err := db.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,cache_hit_rate,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		b.ID, b.Status, b.Fingerprint, b.WorkerID, b.ContextKey, b.Dockerfile, b.ImageTag, string(argsJSON),
-		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, string(instrJSON), b.UserID, b.Priority,
+		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, string(instrJSON), b.UserID, b.Priority, b.CacheHitRate,
 		b.CreatedAt.Format(time.RFC3339), b.UpdatedAt.Format(time.RFC3339))
 	return err
 }
@@ -306,9 +314,9 @@ func insertBuildTx(tx *sql.Tx, b *domain.Build) error {
 	now := time.Now().UTC()
 	b.CreatedAt = now
 	b.UpdatedAt = now
-	_, err := tx.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+	_, err := tx.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,cache_hit_rate,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		b.ID, b.Status, b.Fingerprint, b.WorkerID, b.ContextKey, b.Dockerfile, b.ImageTag, string(argsJSON),
-		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, string(instrJSON), b.UserID, b.Priority,
+		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, string(instrJSON), b.UserID, b.Priority, b.CacheHitRate,
 		b.CreatedAt.Format(time.RFC3339), b.UpdatedAt.Format(time.RFC3339))
 	return err
 }
@@ -324,7 +332,7 @@ func listBuilds(db *sql.DB, query string, args ...interface{}) ([]*domain.Build,
 		var b domain.Build
 		var argsJSON, completedAt, instrJSON sql.NullString
 		var createdAt, updatedAt string
-		if err := rows.Scan(&b.ID, &b.Status, &b.Fingerprint, &b.WorkerID, &b.ContextKey, &b.Dockerfile, &b.ImageTag, &argsJSON, &b.Logs, &b.Error, &b.RetryCount, &b.MaxRetries, &b.TimeoutSeconds, &instrJSON, &b.UserID, &b.Priority, &createdAt, &updatedAt, &completedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.Status, &b.Fingerprint, &b.WorkerID, &b.ContextKey, &b.Dockerfile, &b.ImageTag, &argsJSON, &b.Logs, &b.Error, &b.RetryCount, &b.MaxRetries, &b.TimeoutSeconds, &instrJSON, &b.UserID, &b.Priority, &b.CacheHitRate, &createdAt, &updatedAt, &completedAt); err != nil {
 			return nil, err
 		}
 		b.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -351,7 +359,7 @@ func scanBuild(row *sql.Row) (*domain.Build, error) {
 	var b domain.Build
 	var argsJSON, completedAt, instrJSON sql.NullString
 	var createdAt, updatedAt string
-	err := row.Scan(&b.ID, &b.Status, &b.Fingerprint, &b.WorkerID, &b.ContextKey, &b.Dockerfile, &b.ImageTag, &argsJSON, &b.Logs, &b.Error, &b.RetryCount, &b.MaxRetries, &b.TimeoutSeconds, &instrJSON, &b.UserID, &b.Priority, &createdAt, &updatedAt, &completedAt)
+	err := row.Scan(&b.ID, &b.Status, &b.Fingerprint, &b.WorkerID, &b.ContextKey, &b.Dockerfile, &b.ImageTag, &argsJSON, &b.Logs, &b.Error, &b.RetryCount, &b.MaxRetries, &b.TimeoutSeconds, &instrJSON, &b.UserID, &b.Priority, &b.CacheHitRate, &createdAt, &updatedAt, &completedAt)
 	if err != nil {
 		return nil, err
 	}

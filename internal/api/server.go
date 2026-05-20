@@ -365,6 +365,24 @@ func (s *Server) completeBuild(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Compute and store cache hit rate from logs
+	if body.Status == domain.StatusSucceeded {
+		b, _ := s.db.Builds.Get(id)
+		if b != nil && b.Logs != "" {
+			var hits, misses int
+			for _, line := range strings.Split(b.Logs, "\n") {
+				if strings.Contains(line, "CACHED") {
+					hits++
+				} else if strings.Contains(line, "DONE") && !strings.Contains(line, "CACHED") {
+					misses++
+				}
+			}
+			if total := hits + misses; total > 0 {
+				s.db.Builds.SetCacheRate(id, float64(hits)/float64(total)*100)
+			}
+		}
+	}
 	metrics.BuildsTotal.Add(1)
 	w.WriteHeader(http.StatusOK)
 }
