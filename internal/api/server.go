@@ -115,7 +115,9 @@ func (s *Server) setupRoutes() {
 
 		// Stats (used by FastAPI dashboard)
 		r.Get("/stats", s.publicStats)
-	})
+			r.Get("/stats/daily", s.dailyStats)
+			r.Get("/stats/averages", s.averageStats)
+		})
 
 	s.router.Get("/metrics", metricsHandler)
 	s.router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -257,12 +259,39 @@ func (s *Server) submitBulkBuild(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listBuilds(w http.ResponseWriter, r *http.Request) {
-	builds, err := s.db.Builds.List(50)
+	limit := 20
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &offset)
+	}
+
+	builds, err := s.db.Builds.List(1000) // get all then slice — fine for <10K builds
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(builds)
+
+	total := len(builds)
+	// Slice for pagination
+	if offset < len(builds) {
+		end := offset + limit
+		if end > len(builds) {
+			end = len(builds)
+		}
+		builds = builds[offset:end]
+	} else {
+		builds = nil
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"builds": builds,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) getNextBuild(w http.ResponseWriter, r *http.Request) {

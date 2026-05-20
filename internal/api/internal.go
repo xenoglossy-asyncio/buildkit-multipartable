@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -163,4 +165,57 @@ func (s *Server) manualGC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]int64{"deleted": n})
+}
+
+func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
+	days := 14
+	if d := r.URL.Query().Get("days"); d != "" {
+		fmt.Sscanf(d, "%d", &days)
+	}
+	builds, _ := s.db.Builds.List(5000)
+	now := time.Now().UTC()
+	counts := make([]int, days)
+	for _, b := range builds {
+		age := now.Sub(b.CreatedAt)
+		day := int(age.Hours() / 24)
+		if day >= 0 && day < days {
+			counts[days-1-day]++
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"days":   days,
+		"counts": counts,
+	})
+}
+
+func (s *Server) averageStats(w http.ResponseWriter, r *http.Request) {
+	builds, _ := s.db.Builds.List(2000)
+	var totalTime time.Duration
+	var timed, cacheHits int
+	for _, b := range builds {
+		if b.Status == domain.StatusSucceeded && b.CompletedAt != nil {
+			d := b.UpdatedAt.Sub(b.CreatedAt)
+			if d > 0 && d < 2*time.Hour {
+				totalTime += d
+				timed++
+			}
+		}
+		if b.CompletedAt != nil {
+			if strings.Count(b.Logs, "CACHED") > strings.Count(b.Logs, "DONE")/2 {
+				cacheHits++
+			}
+		}
+	}
+	avgSec := 0.0
+	if timed > 0 {
+		avgSec = totalTime.Seconds() / float64(timed)
+	}
+	cacheRate := 0.0
+	if len(builds) > 0 {
+		cacheRate = float64(cacheHits) / float64(len(builds)) * 100
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"avg_build_sec":   avgSec,
+		"cache_hit_rate":  cacheRate,
+	})
 }

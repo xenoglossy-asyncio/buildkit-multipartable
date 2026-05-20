@@ -1,10 +1,8 @@
 import { useState, useRef, type DragEvent } from "react";
-import { submitBuild, submitBulkBuild, type Build, cancelBuild } from "../lib/api";
-import { buildTarGz, readFolder } from "../lib/tar";
+import { submitBuild, submitBulkBuild, type Build } from "../lib/api";
+import { buildTarGz, readFolder, type TarEntry } from "../lib/tar";
 
-interface Props {
-  onSubmitted: (build: Build) => void;
-}
+interface Props { onSubmitted: (build: Build) => void; }
 
 export default function SubmitBuild({ onSubmitted }: Props) {
   const [tag, setTag] = useState("registry:80/test:latest");
@@ -18,31 +16,20 @@ export default function SubmitBuild({ onSubmitted }: Props) {
   const [buildId, setBuildId] = useState<string | null>(null);
   const [bulkResult, setBulkResult] = useState("");
 
-  const filesRef = useRef<File[] | null>(null);
+  // Store tar entries directly (preserves directory paths)
+  const entriesRef = useRef<TarEntry[] | null>(null);
 
   async function doSubmit() {
-    if (!filesRef.current || filesRef.current.length === 0) {
-      setError("Drop a folder or select files first");
-      return;
-    }
-    setError("");
-    setBulkResult("");
-    setUploading(true);
+    const entries = entriesRef.current;
+    if (!entries || entries.length === 0) { setError("Drop a folder or select one first"); return; }
+    setError(""); setBulkResult(""); setUploading(true);
     try {
-      // Build tar from selected files
-      const entries: { name: string; data: Uint8Array }[] = [];
-      for (const f of filesRef.current) {
-        const path = f.webkitRelativePath || f.name;
-        const buf = new Uint8Array(await f.arrayBuffer());
-        entries.push({ name: path, data: buf });
-      }
       const tar = await buildTarGz(entries);
 
-      // Find Dockerfile content from entries
+      // Find Dockerfile content
       let dfContent = dockerfile;
       for (const e of entries) {
-        const base = e.name.split("/").pop();
-        if (base === dockerfile || base === "Dockerfile") {
+        if (e.name.endsWith("/" + dockerfile) || e.name.endsWith("/Dockerfile") || e.name === dockerfile || e.name === "Dockerfile") {
           dfContent = new TextDecoder().decode(e.data);
           break;
         }
@@ -57,58 +44,61 @@ export default function SubmitBuild({ onSubmitted }: Props) {
         setBuildId(b.id);
         onSubmitted(b);
       }
-    } catch (e: any) {
-      setError(e.message || String(e));
-    }
+    } catch (e: any) { setError(e.message || String(e)); }
     setUploading(false);
   }
 
   async function doCancel() {
     if (!buildId) return;
-    try { await cancelBuild(buildId); } catch {}
+    try { await fetch(`/api/v1/builds/${buildId}`, { method: "DELETE" }); } catch {}
     setBuildId(null);
   }
 
   function handleDrop(e: DragEvent) {
-    e.preventDefault();
-    setDragOver(false);
-
+    e.preventDefault(); setDragOver(false);
     const items = e.dataTransfer.items;
     const first = items?.[0];
     if (first && typeof first.webkitGetAsEntry === "function") {
       const entry = first.webkitGetAsEntry();
       if (entry) {
         readFolder(entry).then((entries) => {
-          const files: File[] = entries.map(
-            (e) => new File([e.data as BlobPart], e.name.split("/").pop() || e.name),
-          );
-          (files as any)._paths = entries.map((e) => e.name);
-          filesRef.current = files;
+          entriesRef.current = entries;
           setFileName(`${entry.name} (${entries.length} files)`);
           setError("");
         });
         return;
       }
     }
-
-    // Fallback: plain file list
+    // Fallback: FileList without directory structure
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
-    filesRef.current = files;
-    setFileName(`${files.length} files selected`);
-    setError("");
+    Promise.all(files.map(async (f) => ({
+      name: f.webkitRelativePath || f.name,
+      data: new Uint8Array(await f.arrayBuffer()),
+    }))).then((entries) => {
+      entriesRef.current = entries;
+      setFileName(`${files.length} files`);
+      setError("");
+    });
+  }
+
+  function handleBrowse(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const dir = files[0].webkitRelativePath?.split("/")[0] || "";
+    Promise.all(Array.from(files).map(async (f) => ({
+      name: f.webkitRelativePath || f.name,
+      data: new Uint8Array(await f.arrayBuffer()),
+    }))).then((entries) => {
+      entriesRef.current = entries;
+      setFileName(dir ? `${dir} (${entries.length} files)` : `${entries.length} files`);
+      setError("");
+    });
   }
 
   return (
     <div className="card">
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 16,
-        }}
-      >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>Submit Build</h2>
         <div style={{ display: "flex", gap: 4 }}>
           <button onClick={() => setMode("single")} className={`mode-btn ${mode !== "single" ? "inactive" : ""}`}>Single</button>
@@ -116,45 +106,24 @@ export default function SubmitBuild({ onSubmitted }: Props) {
         </div>
       </div>
 
-      <p style={{ fontSize: 12, color: "#8b949e", marginBottom: 12 }}>
+      <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>
         {mode === "single"
-          ? "Drop a folder containing one Dockerfile. Browser will archive and upload automatically."
-          : "Bulk: drop a root folder with subdirectories — one build per Dockerfile found."}
+          ? "Drop a folder containing one Dockerfile."
+          : "Bulk: root folder with subdirectories — one build per Dockerfile."}
       </p>
 
-      <div
-        className={`dropzone ${dragOver ? "drag" : ""}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
+      <div className={`dropzone ${dragOver ? "drag" : ""}`}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-      >
+        onDrop={handleDrop}>
         <b>Drop a folder here</b>
         <p style={{ marginTop: 8 }}>
           Or{" "}
-          <label
-            style={{
-              color: "#58a6ff",
-              cursor: "pointer",
-              textDecoration: "underline",
-            }}
-          >
+          <label style={{ color: "var(--primary)", cursor: "pointer", textDecoration: "underline" }}>
             browse
-            <input
-              type="file"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                if (e.target.files && e.target.files.length > 0) {
-                  filesRef.current = Array.from(e.target.files);
-                  const dir = e.target.files[0].webkitRelativePath?.split("/")[0] || "";
-                  setFileName(dir ? `${dir} (${e.target.files.length} files)` : `${e.target.files.length} files selected`);
-                }
-              }}
+            <input type="file" style={{ display: "none" }}
               {...{ webkitdirectory: "" } as any}
-              multiple
-            />
+              onChange={handleBrowse} />
           </label>
         </p>
       </div>
@@ -163,42 +132,17 @@ export default function SubmitBuild({ onSubmitted }: Props) {
       <div className="row" style={{ marginTop: 12 }}>
         {mode === "single" ? (
           <>
-            <input
-              value={tag}
-              onChange={(e) => setTag(e.target.value)}
-              placeholder="registry:80/image:tag"
-              style={{ flex: 1 }}
-            />
-            <input
-              value={dockerfile}
-              onChange={(e) => setDockerfile(e.target.value)}
-              placeholder="Dockerfile"
-              style={{ width: 120 }}
-            />
+            <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="registry:80/image:tag" style={{ flex: 1 }} />
+            <input value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} placeholder="Dockerfile" style={{ width: 120 }} />
           </>
         ) : (
-          <input
-            value={bulkPrefix}
-            onChange={(e) => setBulkPrefix(e.target.value)}
-            placeholder="registry:80/bulk-"
-            style={{ flex: 1 }}
-          />
+          <input value={bulkPrefix} onChange={(e) => setBulkPrefix(e.target.value)} placeholder="registry:80/bulk-" style={{ flex: 1 }} />
         )}
-        <button onClick={doSubmit} disabled={uploading}>
-          {uploading ? "Uploading..." : "Submit"}
-        </button>
-        {buildId && (
-          <button className="danger" onClick={doCancel}>
-            Cancel
-          </button>
-        )}
+        <button onClick={doSubmit} disabled={uploading}>{uploading ? "Uploading..." : "Submit"}</button>
+        {buildId && <button className="danger" onClick={doCancel}>Cancel</button>}
       </div>
 
-      {bulkResult && (
-        <div style={{ marginTop: 8, color: "#3fb950", fontSize: 12 }}>
-          {bulkResult}
-        </div>
-      )}
+      {bulkResult && <div style={{ marginTop: 8, color: "var(--green)", fontSize: 12 }}>{bulkResult}</div>}
       {error && <div className="error">{error}</div>}
     </div>
   );

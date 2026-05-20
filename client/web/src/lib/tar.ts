@@ -1,7 +1,7 @@
 // Minimal tar builder in the browser.
 // Creates a ustar-format tar archive, gzip compressed, from an array of {name, data} entries.
 
-interface TarEntry {
+export interface TarEntry {
   name: string;
   data: Uint8Array;
 }
