@@ -8,9 +8,18 @@ const RANGES: [string, number][] = [["7D", 7], ["14D", 14], ["30D", 30], ["90D",
 
 async function j(url: string) { const r = await fetch(url); return r.ok ? r.json() : null; }
 
+function daysBetween(from: string, to: string): number {
+  if (!from || !to) return 7;
+  return Math.max(1, Math.ceil((new Date(to).getTime() - new Date(from).getTime()) / 86400000));
+}
+
 export default function History() {
   const [days, setDays] = useState(7);
-  const [customDays, setCustomDays] = useState(0);
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [useCustom, setUseCustom] = useState(false);
+
+  const d = useCustom ? daysBetween(customFrom, customTo) : days;
   const [daily, setDaily] = useState<Daily | null>(null);
   const [users, setUsers] = useState<UserStat[]>([]);
   const [stats, setStats] = useState<any>(null);
@@ -34,7 +43,8 @@ export default function History() {
     });
   }, [d]);
 
-  // Responsive aggregation: ≤14d show all, >14d show weekly
+  const needAgg = d > 14;
+  const agg = needAgg ? Math.ceil(d / 14) : 1;
   const agg = d <= 14 ? 1 : Math.ceil(d / 14);
   const dl = daily;
   const maxD = dl ? Math.max(1, ...dl.counts) : 1;
@@ -47,11 +57,17 @@ export default function History() {
 
       <div className="time-selector" style={{ marginBottom: 16 }}>
         {RANGES.map(([label, nd]) => (
-          <button key={label} className={d === nd && !customDays ? "active" : ""} onClick={() => { setDays(nd); setCustomDays(0); }}>{label}</button>
+          <button key={label} className={d === nd && !useCustom ? "active" : ""} onClick={() => { setDays(nd); setUseCustom(false); }}>{label}</button>
         ))}
-        <div className="date-range">
-          <input type="number" value={customDays || ""} onChange={e => { const v = +e.target.value; setCustomDays(v > 0 ? v : 0); }} placeholder="Custom days" style={{ width: 100, fontSize: 11 }} />
-        </div>
+        <button className={useCustom ? "active" : ""} onClick={() => setUseCustom(true)}>Custom</button>
+        {useCustom && (
+          <div className="date-range">
+            <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
+            <span style={{ color: "var(--muted)", fontSize: 11 }}>to</span>
+            <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} />
+            {d > 0 && <span style={{ color: "var(--muted)", fontSize: 11 }}>({d} days)</span>}
+          </div>
+        )}
       </div>
 
       {/* Stats cards */}

@@ -62,6 +62,7 @@ export default function BuildList({ selected, onSelect }: Props) {
       <div className="build-row" style={{ color: "var(--muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: ".5px", cursor: "default", padding: "4px 8px" }}>
         <span style={{ width: 70, fontFamily: "monospace" }}>ID</span>
         <span style={{ flex: 1 }}>Tag</span>
+        <span style={{ width: 80 }}>User</span>
         <span style={{ width: 50, textAlign: "right" }}>Time</span>
         <span style={{ width: 50, textAlign: "right" }}>Cache</span>
         <span style={{ width: 80, textAlign: "right" }}>Status</span>
@@ -75,6 +76,7 @@ export default function BuildList({ selected, onSelect }: Props) {
           onClick={() => onSelect(b.id)}>
           <span className="build-id" title={b.id} style={{ width: 70 }}>{b.id.substring(0, 8)}</span>
           <span className="build-tag" title={b.image_tag} style={{ flex: 1 }}>{b.image_tag || "—"}</span>
+          <span style={{ fontSize: 11, color: "var(--muted)", width: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.user_id}>{b.user_id || "anonymous"}</span>
           <span style={{ fontSize: 11, color: "var(--muted)", width: 50, textAlign: "right" }}>{timeStr(b)}</span>
           <span style={{ fontSize: 11, color: "var(--muted)", width: 50, textAlign: "right" }}>{cachePct(b)}</span>
           <span className={`build-status ${statusC[b.status] || ""}`} style={{ width: 80, textAlign: "center" }}>{b.status}</span>

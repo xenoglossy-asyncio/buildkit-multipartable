@@ -305,18 +305,18 @@ func (s *Server) averageStats(w http.ResponseWriter, r *http.Request) {
 		avgSec = totalTime.Seconds() / float64(timed)
 	}
 
-	// Count cache hits vs misses from log output
-	// buildctl lines: "#7 CACHED" = cache hit, "#7 DONE" without CACHED = cache miss
+	// Count cache hits vs misses from log output — only successful builds
 	var cacheHits, cacheMisses int
 	for _, b := range builds {
-		if b.Status == domain.StatusSucceeded && b.Logs != "" {
-			lines := strings.Split(b.Logs, "\n")
-			for _, line := range lines {
-				if strings.Contains(line, "CACHED") {
-					cacheHits++
-				} else if strings.Contains(line, "DONE") && !strings.Contains(line, "CACHED") {
-					cacheMisses++
-				}
+		if b.Status != domain.StatusSucceeded || b.Logs == "" {
+			continue
+		}
+		lines := strings.Split(b.Logs, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "CACHED") {
+				cacheHits++
+			} else if strings.Contains(line, "DONE") && !strings.Contains(line, "CACHED") {
+				cacheMisses++
 			}
 		}
 	}
