@@ -96,7 +96,7 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions, onLog LogFunc) (*
 			line := scanner.Text()
 			logBuf.WriteString(line + "\n")
 			if onLog != nil {
-				onLog(line)
+				onLog(line + "\n")
 			}
 		}
 	}()
