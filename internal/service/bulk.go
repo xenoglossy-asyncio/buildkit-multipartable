@@ -85,7 +85,9 @@ func extractSubdir(r io.Reader, entry bulkEntry) (*bytes.Reader, error) {
 			return nil, err
 		}
 		if hdr.Typeflag == tar.TypeReg {
-			io.Copy(tw, tr)
+			if _, err := io.Copy(tw, tr); err != nil {
+				return nil, fmt.Errorf("copy tar entry %s: %w", newHdr.Name, err)
+			}
 		}
 	}
 

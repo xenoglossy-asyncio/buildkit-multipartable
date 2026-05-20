@@ -1,16 +1,18 @@
 """dtbuildkit user-facing service."""
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from routers import auth, builds, dashboard, admin
 from services import s3
 from services.cache import cache, CACHE_TTL
+
+log = logging.getLogger(__name__)
 
 BUILD_SERVICE = os.getenv("BUILD_SERVICE", "http://server:8640")
 
@@ -21,8 +23,10 @@ async def refresh_loop(client: httpx.AsyncClient):
         await asyncio.sleep(CACHE_TTL)
         try:
             await dashboard.refresh_cache(client)
-        except Exception:
-            pass
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.warning("cache refresh failed: %s", e)
 
 
 @asynccontextmanager
@@ -58,8 +62,3 @@ app.include_router(auth.router)
 app.include_router(builds.router)
 app.include_router(dashboard.router)
 app.include_router(admin.router)
-
-# Serve web frontend static files (built Vite output)
-web_dir = os.path.join(os.path.dirname(__file__), "web", "dist")
-if os.path.isdir(web_dir):
-    app.mount("/", StaticFiles(directory=web_dir, html=True), name="frontend")

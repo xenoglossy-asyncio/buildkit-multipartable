@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { type Build, type BuildPage, cancelBuild } from "../lib/api";
 import { getCached, setCached } from "../lib/useCache";
 import LogModal from "./LogModal";
@@ -32,18 +32,30 @@ export default function BuildList({ selected, onSelect }: Props) {
   const [pp, sp] = useState(15);
   const [jump, setJump] = useState("");
   const [logModal, setLogModal] = useState<Build | null>(null);
+  const [error, setError] = useState("");
+  const controllerRef = useRef<AbortController | null>(null);
 
   async function load() {
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
     try {
       const cacheKey = `builds-${pp}-${pg}`;
       const cached = getCached(cacheKey, 3000);
       if (cached) { setPage(cached); }
-      const r = await fetch(`/api/v1/builds?limit=${pp}&offset=${pg * pp}`);
-      if (r.ok) { const data = await r.json(); setCached(cacheKey, data); setPage(data); }
-    } catch {}
+      const r = await fetch(`/api/v1/builds?limit=${pp}&offset=${pg * pp}`, { signal: controller.signal });
+      if (r.ok) { const data = await r.json(); setCached(cacheKey, data); setPage(data); setError(""); }
+      else { setError(`Failed to load builds (${r.status})`); }
+    } catch (e: any) {
+      if (e.name !== "AbortError") setError("Failed to load builds");
+    }
   }
 
-  useEffect(() => { setPage(null); load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [pg, pp]);
+  useEffect(() => {
+    setPage(null); load();
+    const t = setInterval(load, 5000);
+    return () => { controllerRef.current?.abort(); clearInterval(t); };
+  }, [pg, pp]);
 
   const totalPages = page ? Math.ceil(page.total / pp) : 0;
 
@@ -76,7 +88,7 @@ export default function BuildList({ selected, onSelect }: Props) {
         <span style={{ width: 140, textAlign: "right" }}>Actions</span>
       </div>
 
-      {!page && <p style={{ color: "var(--muted)", fontSize: 12 }}>Loading...</p>}
+      {!page && <p style={{ color: error ? "var(--red)" : "var(--muted)", fontSize: 12 }}>{error || "Loading..."}</p>}
       {page?.builds.length === 0 && <p style={{ color: "var(--muted)", fontSize: 12 }}>No builds yet</p>}
 
       {page?.builds.map(b => (

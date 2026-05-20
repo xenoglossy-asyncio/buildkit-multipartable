@@ -17,9 +17,11 @@ export default function LogModal({ build, onClose }: Props) {
 
   useEffect(() => {
     if (!useSSE) return;
+    // SSE stream sends all existing logs on connect, so clear to avoid duplication
+    setLogs("");
     const es = streamLogs(
       build.id,
-      (line) => setLogs((prev) => prev + line),
+      (line) => setLogs((prev) => prev + line + "\n"),
       () => es.close()
     );
     return () => es.close();

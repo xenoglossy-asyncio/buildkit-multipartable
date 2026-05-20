@@ -16,9 +16,9 @@ import (
 
 // BlobStore is the interface for storing build contexts.
 type BlobStore interface {
-	Put(key string, r io.Reader) (int64, error)
-	Get(key string, w io.Writer) (int64, error)
-	Delete(key string) error
+	Put(ctx context.Context, key string, r io.Reader) (int64, error)
+	Get(ctx context.Context, key string, w io.Writer) (int64, error)
+	Delete(ctx context.Context, key string) error
 }
 
 // S3Store implements BlobStore using S3-compatible storage (MinIO).
@@ -61,12 +61,12 @@ func NewS3Store(cfg S3Config) (*S3Store, error) {
 	return &S3Store{client: client, bucket: cfg.Bucket}, nil
 }
 
-func (s *S3Store) Put(key string, r io.Reader) (int64, error) {
+func (s *S3Store) Put(ctx context.Context, key string, r io.Reader) (int64, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return 0, err
 	}
-	info, err := s.client.PutObject(context.Background(), s.bucket, key,
+	info, err := s.client.PutObject(ctx, s.bucket, key,
 		bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{})
 	if err != nil {
 		return 0, err
@@ -74,8 +74,8 @@ func (s *S3Store) Put(key string, r io.Reader) (int64, error) {
 	return info.Size, nil
 }
 
-func (s *S3Store) Get(key string, w io.Writer) (int64, error) {
-	obj, err := s.client.GetObject(context.Background(), s.bucket, key, minio.GetObjectOptions{})
+func (s *S3Store) Get(ctx context.Context, key string, w io.Writer) (int64, error) {
+	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -83,8 +83,8 @@ func (s *S3Store) Get(key string, w io.Writer) (int64, error) {
 	return io.Copy(w, obj)
 }
 
-func (s *S3Store) Delete(key string) error {
-	return s.client.RemoveObject(context.Background(), s.bucket, key, minio.RemoveObjectOptions{})
+func (s *S3Store) Delete(ctx context.Context, key string) error {
+	return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
 }
 
 // LocalStore implements BlobStore using the local filesystem (dev/testing).
@@ -104,7 +104,7 @@ func (s *LocalStore) resolveKey(key string) string {
 	return filepath.Join(s.basePath, filepath.Clean(key))
 }
 
-func (s *LocalStore) Put(key string, r io.Reader) (int64, error) {
+func (s *LocalStore) Put(_ context.Context, key string, r io.Reader) (int64, error) {
 	p := s.resolveKey(key)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return 0, err
@@ -117,7 +117,7 @@ func (s *LocalStore) Put(key string, r io.Reader) (int64, error) {
 	return io.Copy(f, r)
 }
 
-func (s *LocalStore) Get(key string, w io.Writer) (int64, error) {
+func (s *LocalStore) Get(_ context.Context, key string, w io.Writer) (int64, error) {
 	f, err := os.Open(s.resolveKey(key))
 	if err != nil {
 		return 0, err
@@ -126,7 +126,7 @@ func (s *LocalStore) Get(key string, w io.Writer) (int64, error) {
 	return io.Copy(w, f)
 }
 
-func (s *LocalStore) Delete(key string) error {
+func (s *LocalStore) Delete(_ context.Context, key string) error {
 	return os.Remove(s.resolveKey(key))
 }
 

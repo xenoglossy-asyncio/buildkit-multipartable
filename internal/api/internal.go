@@ -25,7 +25,11 @@ var apiKeyStore = struct {
 }{keys: make(map[string]string)}
 
 func (s *Server) publicStats(w http.ResponseWriter, r *http.Request) {
-	builds, _ := s.db.Builds.List(1000)
+	builds, err := s.db.Builds.List(1000)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	var total, succeeded, failed int64
 	for _, b := range builds {
 		total++
@@ -66,7 +70,11 @@ func (s *Server) adminHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
-	builds, _ := s.db.Builds.List(1000)
+	builds, err := s.db.Builds.List(1000)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	var total, succeeded, failed int64
 	for _, b := range builds {
 		total++
@@ -129,7 +137,11 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	defer apiKeyStore.RUnlock()
 	keys := make([]map[string]string, 0, len(apiKeyStore.keys))
 	for uid, k := range apiKeyStore.keys {
-		keys = append(keys, map[string]string{"user_id": uid, "key": k[:8] + "..."})
+		display := k
+		if len(k) > 8 {
+			display = k[:8] + "..."
+		}
+		keys = append(keys, map[string]string{"user_id": uid, "key": display})
 	}
 	json.NewEncoder(w).Encode(keys)
 }
@@ -143,7 +155,10 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	key := hex.EncodeToString(b)
 	apiKeyStore.Lock()
 	apiKeyStore.keys[body.UserID] = key
@@ -164,7 +179,17 @@ func (s *Server) userStats(w http.ResponseWriter, r *http.Request) {
 	if d := r.URL.Query().Get("days"); d != "" {
 		fmt.Sscanf(d, "%d", &days)
 	}
-	builds, _ := s.db.Builds.List(5000)
+	if days <= 0 {
+		days = 30
+	}
+	if days > 365 {
+		days = 365
+	}
+	builds, err := s.db.Builds.List(5000)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 
 	type ustat struct {
@@ -219,7 +244,11 @@ func (s *Server) userStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runningBuilds(w http.ResponseWriter, r *http.Request) {
-	builds, _ := s.db.Builds.List(200)
+	builds, err := s.db.Builds.List(200)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	var running []map[string]interface{}
 	for _, b := range builds {
 		if b.Status == domain.StatusBuilding || b.Status == domain.StatusPending {
@@ -254,7 +283,17 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 	if d := r.URL.Query().Get("days"); d != "" {
 		fmt.Sscanf(d, "%d", &days)
 	}
-	builds, _ := s.db.Builds.List(5000)
+	if days <= 0 {
+		days = 14
+	}
+	if days > 365 {
+		days = 365
+	}
+	builds, err := s.db.Builds.List(5000)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	now := time.Now().UTC()
 	today := now.Truncate(24 * time.Hour)
 	counts := make([]int, days)
@@ -288,7 +327,11 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) averageStats(w http.ResponseWriter, r *http.Request) {
-	builds, _ := s.db.Builds.List(2000)
+	builds, err := s.db.Builds.List(2000)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	var totalTime time.Duration
 	var timed int
 	for _, b := range builds {

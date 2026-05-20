@@ -20,8 +20,11 @@ def init():
     if not endpoint:
         raise RuntimeError("S3_ENDPOINT is required for direct S3 upload")
 
-    access_key = os.getenv("S3_ACCESS_KEY", "admin")
-    secret_key = os.getenv("S3_SECRET_KEY", "password")
+    access_key = os.getenv("S3_ACCESS_KEY", "")
+    secret_key = os.getenv("S3_SECRET_KEY", "")
+    if not access_key or not secret_key:
+        raise RuntimeError("S3_ACCESS_KEY and S3_SECRET_KEY are required")
+
     _bucket = os.getenv("S3_BUCKET", "dtbuildkit")
     use_ssl = os.getenv("S3_USE_SSL", "false").lower() == "true"
 

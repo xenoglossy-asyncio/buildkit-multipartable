@@ -69,19 +69,27 @@ services:
       - server-data:/data
     restart: unless-stopped
 
-  # ---- User-Facing Service (FastAPI + SPA) ----
+  # ---- Web (nginx + frontend SPA) ----
+  web:
+    build: ./client/web
+    container_name: dtbuild-web
+    ports:
+      - "3000:80"
+    depends_on:
+      - client
+    restart: unless-stopped
+
+  # ---- API Service (FastAPI) ----
   client:
     build: ./client
     container_name: dtbuild-client
     ports:
-      - "3000:3000"
+      - "8100:3000"
     environment:
       <<: *s3-env
       BUILD_SERVICE: http://server:8640
       DTBUILD_ADMIN_KEY: fucking-admin-dtbuildkit
       REDIS_URL: redis://redis:6379
-    volumes:
-      - ./client:/app
     depends_on:
       - server
     restart: unless-stopped

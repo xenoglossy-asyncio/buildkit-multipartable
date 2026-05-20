@@ -3,6 +3,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -129,7 +130,7 @@ func (s *BuildService) SubmitBulkBuild(contextData []byte, tagPrefix string, use
 		buildID := uuid.New().String()
 		ctxKey := fmt.Sprintf("contexts/%s.tar.gz", buildID)
 
-		if _, err := s.blobs.Put(ctxKey, subTar); err != nil {
+		if _, err := s.blobs.Put(context.Background(), ctxKey, subTar); err != nil {
 			slog.Warn("store subdir context failed", "dir", sd.path, "error", err)
 			continue
 		}

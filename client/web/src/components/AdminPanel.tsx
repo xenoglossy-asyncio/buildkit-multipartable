@@ -35,14 +35,16 @@ export default function AdminPanel() {
     const cached = JSON.parse(sessionStorage.getItem("dtb_admin") || "null");
     if (cached) { setHealth(cached.h); setStats(cached.s); setKeys(cached.k || []); setUsers((cached.k || []).map((x: any) => x.user_id)); }
 
+    const controller = new AbortController();
     const load = () => Promise.all([api("GET", "/health"), api("GET", "/stats"), api("GET", "/keys")])
       .then(([h, s, k]) => {
+        if (controller.signal.aborted) return;
         sessionStorage.setItem("dtb_admin", JSON.stringify({ h, s, k }));
         setHealth(h); setStats(s); setKeys(k || []); setUsers((k || []).map((x: any) => x.user_id));
       }).catch(() => {});
     load();
     const t = setInterval(load, 10000);
-    return () => clearInterval(t);
+    return () => { controller.abort(); clearInterval(t); };
   }, []);
 
   async function loadQuota(uid: string) {
@@ -54,6 +56,10 @@ export default function AdminPanel() {
   }
 
   async function saveQuota() {
+    if (qForm.max_concurrent < 0 || qForm.max_daily < 0 || qForm.max_timeout_sec < 0 || qForm.max_storage_bytes < 0) {
+      setMsg("Quota values must be non-negative"); return;
+    }
+    if (qForm.max_timeout_sec > 86400) { setMsg("Max timeout cannot exceed 86400 seconds"); return; }
     try { await api("PUT", `/quotas/${selectedUser}`, qForm); setMsg("Quota saved"); loadQuota(selectedUser); } catch (e: any) { setMsg(e.message); }
   }
   async function resetQuota() { try { await api("DELETE", `/quotas/${selectedUser}`); setMsg("Reset"); } catch (e: any) { setMsg(e.message); } }

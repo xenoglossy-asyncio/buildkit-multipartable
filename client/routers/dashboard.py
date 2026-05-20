@@ -1,8 +1,11 @@
 """Public dashboard metrics — served from Redis cache, refreshed every 30s."""
 import json
+import logging
 from fastapi import APIRouter, Request, Query
 from services import buildkit
 from services.cache import cache, CACHE_TTL
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["dashboard"])
 
@@ -18,7 +21,10 @@ ENDPOINTS = {
 async def cached_get(client, key: str, url: str) -> dict | list:
     data = await cache.get(key)
     if data:
-        return json.loads(data)
+        try:
+            return json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            log.warning("corrupted cache entry for key=%s, refetching", key)
     resp = await client.get(url)
     resp.raise_for_status()
     result = resp.json()
@@ -34,8 +40,8 @@ async def refresh_cache(client):
             resp = await client.get(url)
             resp.raise_for_status()
             await cache.set(key, json.dumps(resp.json()))
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("failed to refresh cache key=%s: %s", key, e)
 
 
 @router.get("/stats")
@@ -44,7 +50,7 @@ async def get_stats(request: Request):
 
 
 @router.get("/stats/daily")
-async def get_daily_stats(request: Request, days: int = Query(default=14)):
+async def get_daily_stats(request: Request, days: int = Query(default=14, ge=1, le=365)):
     return await cached_get(
         buildkit.build_client(request),
         f"stats:daily:{days}",
@@ -58,7 +64,7 @@ async def get_averages(request: Request):
 
 
 @router.get("/stats/users")
-async def get_user_stats(request: Request, days: int = Query(default=30)):
+async def get_user_stats(request: Request, days: int = Query(default=30, ge=1, le=365)):
     return await cached_get(
         buildkit.build_client(request),
         f"stats:users:{days}",

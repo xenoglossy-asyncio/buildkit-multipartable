@@ -12,8 +12,8 @@ async def stats(request: Request) -> dict:
     return resp.json()
 
 
-async def list_builds(request: Request, limit: int = 50) -> list:
-    resp = await build_client(request).get(f"/api/v1/builds?limit={limit}")
+async def list_builds(request: Request, limit: int = 50, offset: int = 0) -> dict:
+    resp = await build_client(request).get(f"/api/v1/builds?limit={limit}&offset={offset}")
     resp.raise_for_status()
     return resp.json()
 

@@ -6,7 +6,7 @@ interface UserStat { user_id: string; count: number; succeeded: number; failed: 
 
 const RANGES: [string, number][] = [["7D", 7], ["14D", 14], ["30D", 30], ["90D", 90]];
 
-async function j(url: string) { const r = await fetch(url); return r.ok ? r.json() : null; }
+async function j(url: string, signal?: AbortSignal) { const r = await fetch(url, { signal }); return r.ok ? r.json() : null; }
 
 function daysBetween(from: string, to: string): number {
   if (!from || !to) return 7;
@@ -36,15 +36,18 @@ export default function History() {
       setUsers([]);
     }
 
+    const controller = new AbortController();
     Promise.all([
-      j(`/api/v1/stats/daily?days=${d}`),
-      j(`/api/v1/stats/users?days=${d}`),
-      j("/api/v1/stats"),
-      j("/api/v1/stats/averages"),
+      j(`/api/v1/stats/daily?days=${d}`, controller.signal),
+      j(`/api/v1/stats/users?days=${d}`, controller.signal),
+      j("/api/v1/stats", controller.signal),
+      j("/api/v1/stats/averages", controller.signal),
     ]).then(([dl, us, st, av]) => {
       setCached(key, { dl, us, st, av });
       setDaily(dl); setUsers(us || []); setStats(st); setAvg(av);
-    });
+    }).catch(() => {});
+
+    return () => controller.abort();
   }, [d]);
 
   const agg = d <= 14 ? 1 : Math.ceil(d / 14);

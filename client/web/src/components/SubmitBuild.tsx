@@ -22,6 +22,9 @@ export default function SubmitBuild({ onSubmitted }: Props) {
   async function doSubmit() {
     const entries = entriesRef.current;
     if (!entries || entries.length === 0) { setError("Drop a folder or select one first"); return; }
+    if (mode === "single" && !tag.trim()) { setError("Image tag is required"); return; }
+    if (mode === "bulk" && !bulkPrefix.trim()) { setError("Tag prefix is required"); return; }
+    if (entries.length > 10000) { setError("Too many files (max 10,000)"); return; }
     setError(""); setBulkResult(""); setUploading(true);
     try {
       // Strip root folder name from all paths so Dockerfile/COPY references work

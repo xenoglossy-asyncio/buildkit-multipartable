@@ -220,7 +220,7 @@ func (w *Worker) tryExecuteBuild(ctx context.Context) error {
 	}
 	defer os.RemoveAll(contextDir)
 
-	if err := w.downloadContext(build.ID, contextDir); err != nil {
+	if err := w.downloadContext(ctx, build.ID, contextDir); err != nil {
 		w.completeBuild(build.ID, domain.StatusFailed, err.Error(), "")
 		return nil
 	}
@@ -303,7 +303,7 @@ func (w *Worker) executeBuild(ctx context.Context, build *domain.Build, contextD
 	}
 
 	_, err = bc.Build(buildCtx, opts, func(line string) {
-		w.sendLog(build.ID, line)
+		w.sendLog(buildCtx, build.ID, line)
 	})
 
 	if err != nil {
@@ -320,7 +320,13 @@ func (w *Worker) executeBuild(ctx context.Context, build *domain.Build, contextD
 }
 
 func (w *Worker) isBuildCancelled(buildID string) bool {
-	resp, err := w.HTTPClient.Get(w.ServerURL + "/api/v1/builds/" + buildID)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", w.ServerURL+"/api/v1/builds/"+buildID, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := w.HTTPClient.Do(req)
 	if err != nil {
 		return false
 	}
@@ -332,10 +338,10 @@ func (w *Worker) isBuildCancelled(buildID string) bool {
 	return b.Status == domain.StatusCancelled
 }
 
-func (w *Worker) downloadContext(buildID, dest string) error {
+func (w *Worker) downloadContext(ctx context.Context, buildID, dest string) error {
 	if w.s3Client != nil {
 		key := "contexts/" + buildID + ".tar.gz"
-		obj, err := w.s3Client.GetObject(context.Background(), w.s3Bucket, key, minio.GetObjectOptions{})
+		obj, err := w.s3Client.GetObject(ctx, w.s3Bucket, key, minio.GetObjectOptions{})
 		if err == nil {
 			// Verify the object is accessible by reading stat
 			if _, statErr := obj.Stat(); statErr == nil {
@@ -350,11 +356,15 @@ func (w *Worker) downloadContext(buildID, dest string) error {
 			slog.Warn("S3 GetObject failed, falling back to HTTP", "key", key, "error", err)
 		}
 	}
-	return w.downloadContextHTTP(buildID, dest)
+	return w.downloadContextHTTP(ctx, buildID, dest)
 }
 
-func (w *Worker) downloadContextHTTP(buildID, dest string) error {
-	resp, err := w.HTTPClient.Get(w.ServerURL + "/api/v1/blobs/contexts/" + buildID + ".tar.gz")
+func (w *Worker) downloadContextHTTP(ctx context.Context, buildID, dest string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", w.ServerURL+"/api/v1/blobs/contexts/"+buildID+".tar.gz", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	resp, err := w.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("fetch context: %w", err)
 	}
@@ -365,8 +375,11 @@ func (w *Worker) downloadContextHTTP(buildID, dest string) error {
 	return extractTarGz(resp.Body, dest)
 }
 
-func (w *Worker) sendLog(buildID, line string) {
+func (w *Worker) sendLog(ctx context.Context, buildID, line string) {
 	for i := 0; i < 3; i++ {
+		if ctx.Err() != nil {
+			return
+		}
 		code, err := w.doPost("/api/v1/builds/"+buildID+"/log", line)
 		if err == nil && code == 200 {
 			return
@@ -376,7 +389,10 @@ func (w *Worker) sendLog(buildID, line string) {
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
 		}
 	}
-	slog.Error("sendLog failed after retries", "build", buildID, "line", line[:min(len(line), 200)])
+	if len(line) > 200 {
+		line = line[:200]
+	}
+	slog.Error("sendLog failed after retries", "build", buildID, "line", line)
 }
 
 func (w *Worker) completeBuild(buildID string, status domain.Status, errMsg, digest string) {

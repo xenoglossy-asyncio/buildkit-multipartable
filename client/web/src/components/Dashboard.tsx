@@ -6,7 +6,7 @@ interface Averages { avg_build_sec: number; cache_hit_rate: number; }
 interface UserStat { user_id: string; count: number; succeeded: number; failed: number; avg_time_sec: number; cache_rate: number; success_rate: number; }
 interface RunningBuild { id: string; image_tag: string; status: string; elapsed: string; user_id: string; }
 
-async function j(url: string) { const r = await fetch(url); return r.ok ? r.json() : null; }
+async function j(url: string, signal?: AbortSignal) { const r = await fetch(url, { signal }); return r.ok ? r.json() : null; }
 
 function StatCard({ label, value, sub, cls }: { label: string; value: string; sub?: string; cls?: string }) {
   return (
@@ -23,25 +23,34 @@ export default function Dashboard() {
   const [avg, setAvg] = useState<Averages | null>(null);
   const [users, setUsers] = useState<UserStat[]>([]);
   const [running, setRunning] = useState<RunningBuild[]>([]);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     // Show cached data instantly
     const cached = getCached("dashboard", 10000);
     if (cached) { setStats(cached.s); setAvg(cached.a); setUsers(cached.u); setRunning(cached.r); }
 
+    const controller = new AbortController();
     const load = async () => {
-      const [s, a, u, r] = await Promise.all([
-        j("/api/v1/stats"), j("/api/v1/stats/averages"),
-        j("/api/v1/stats/users?days=30"), j("/api/v1/stats/running"),
-      ]);
-      const data = { s, a, u: u || [], r: r || [] };
-      setCached("dashboard", data);
-      setStats(s); setAvg(a); setUsers(u || []); setRunning(r || []);
+      try {
+        const [s, a, u, r] = await Promise.all([
+          j("/api/v1/stats", controller.signal), j("/api/v1/stats/averages", controller.signal),
+          j("/api/v1/stats/users?days=30", controller.signal), j("/api/v1/stats/running", controller.signal),
+        ]);
+        const data = { s, a, u: u || [], r: r || [] };
+        setCached("dashboard", data);
+        setStats(s); setAvg(a); setUsers(u || []); setRunning(r || []);
+        setError("");
+      } catch (e: any) {
+        if (e.name !== "AbortError") setError("Failed to load dashboard data");
+      }
     };
-    load(); const t = setInterval(load, 30000); return () => clearInterval(t);
+    load();
+    const t = setInterval(load, 30000);
+    return () => { controller.abort(); clearInterval(t); };
   }, []);
 
-  if (!stats) return <p style={{ color: "var(--muted)" }}>Loading...</p>;
+  if (!stats) return <p style={{ color: "var(--muted)" }}>{error || "Loading..."}</p>;
 
   return (
     <div>

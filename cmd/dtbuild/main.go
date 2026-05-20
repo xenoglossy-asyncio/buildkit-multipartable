@@ -19,7 +19,10 @@ const defaultServer = "http://localhost:8640"
 func apiKey() string { return os.Getenv("DTBUILD_API_KEY") }
 
 func doGet(url string) (*http.Response, error) {
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
 	if k := apiKey(); k != "" {
 		req.Header.Set("X-Api-Key", k)
 	}
@@ -27,7 +30,10 @@ func doGet(url string) (*http.Response, error) {
 }
 
 func doPost(url, contentType string, body io.Reader) (*http.Response, error) {
-	req, _ := http.NewRequest("POST", url, body)
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -141,8 +147,15 @@ func cmdSubmit(args []string) {
 	w := multipart.NewWriter(&formBody)
 
 	// Context file
-	ctxPart, _ := w.CreateFormFile("context", "context.tar.gz")
-	ctxPart.Write(buf.Bytes())
+	ctxPart, err := w.CreateFormFile("context", "context.tar.gz")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error creating form file: %v\n", err)
+		os.Exit(1)
+	}
+	if _, err := ctxPart.Write(buf.Bytes()); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing context: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Dockerfile content
 	w.WriteField("dockerfile", string(dfContent))
@@ -168,7 +181,10 @@ func cmdSubmit(args []string) {
 	defer resp.Body.Close()
 
 	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Fprintf(os.Stderr, "error decoding response: %v\n", err)
+		os.Exit(1)
+	}
 
 	if resp.StatusCode != http.StatusCreated {
 		fmt.Fprintf(os.Stderr, "error: server returned %d\n", resp.StatusCode)
@@ -202,8 +218,15 @@ func cmdSubmitBulk(args []string) {
 
 	var formBody bytes.Buffer
 	w := multipart.NewWriter(&formBody)
-	ctxPart, _ := w.CreateFormFile("context", "context.tar.gz")
-	ctxPart.Write(buf.Bytes())
+	ctxPart, err := w.CreateFormFile("context", "context.tar.gz")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error creating form file: %v\n", err)
+		os.Exit(1)
+	}
+	if _, err := ctxPart.Write(buf.Bytes()); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing context: %v\n", err)
+		os.Exit(1)
+	}
 	w.WriteField("tag_prefix", tagPrefix)
 	w.Close()
 
@@ -227,7 +250,10 @@ func cmdSubmitBulk(args []string) {
 			ImageTag string `json:"image_tag"`
 		} `json:"builds"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Fprintf(os.Stderr, "error decoding response: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Printf("Created %d builds:\n", result.Count)
 	for _, b := range result.Builds {
@@ -256,7 +282,10 @@ func cmdStatus(args []string) {
 	}
 
 	var build map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&build)
+	if err := json.NewDecoder(resp.Body).Decode(&build); err != nil {
+		fmt.Fprintf(os.Stderr, "error decoding response: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Printf("ID:      %v\n", build["id"])
 	fmt.Printf("Status:  %v\n", build["status"])
@@ -295,7 +324,10 @@ func cmdList(args []string) {
 	defer resp.Body.Close()
 
 	var builds []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&builds)
+	if err := json.NewDecoder(resp.Body).Decode(&builds); err != nil {
+		fmt.Fprintf(os.Stderr, "error decoding response: %v\n", err)
+		os.Exit(1)
+	}
 
 	for _, b := range builds {
 		fmt.Printf("%v  %-12v  %v\n", b["id"], b["status"], b["image_tag"])

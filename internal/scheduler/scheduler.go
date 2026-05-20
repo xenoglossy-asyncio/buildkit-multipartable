@@ -119,14 +119,36 @@ func (s *Scheduler) RemoveWorker(workerID string) {
 // MarkWorkerIdle marks a worker as available and updates its cache keys.
 func (s *Scheduler) MarkWorkerIdle(workerID string, cacheKeys []string) {
 	s.mu.Lock()
-	if ws, ok := s.workers[workerID]; ok {
-		ws.Status = "idle"
-		ws.CacheKeys = cacheKeys
-	}
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
-	// Re-register to update ring with new cache keys
-	s.RegisterWorker(workerID, "idle", cacheKeys)
+	// Remove existing ring nodes
+	s.removeWorkerLocked(workerID)
+
+	// Update or create worker state
+	ws := &WorkerState{
+		ID:        workerID,
+		Status:    "idle",
+		CacheKeys: cacheKeys,
+	}
+	s.workers[workerID] = ws
+
+	// Add virtual replicas to ring
+	for i := 0; i < virtualReplicas; i++ {
+		var sb strings.Builder
+		sb.WriteString(workerID)
+		sb.WriteString(":")
+		sb.WriteString(fmt.Sprint(i))
+		for _, ck := range cacheKeys {
+			sb.WriteString(":")
+			sb.WriteString(ck)
+		}
+		node := ringNode{
+			hash:     hashToRing(hashKey(sb.String())),
+			workerID: workerID,
+		}
+		s.ring = append(s.ring, node)
+	}
+	sort.Sort(s.ring)
 }
 
 // MarkWorkerBusy marks a worker as building.
@@ -243,12 +265,19 @@ func (s *Scheduler) ScoreBuildForWorker(buildInstructions []string, workerID str
 	return float64(intersection) / float64(union)
 }
 
-// GetWorker returns a worker's current state.
-func (s *Scheduler) GetWorker(workerID string) (*WorkerState, bool) {
+// GetWorker returns a copy of a worker's current state.
+func (s *Scheduler) GetWorker(workerID string) (WorkerState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	ws, ok := s.workers[workerID]
-	return ws, ok
+	if !ok {
+		return WorkerState{}, false
+	}
+	// Return a copy to prevent external mutation of internal state
+	cpy := *ws
+	cpy.CacheKeys = make([]string, len(ws.CacheKeys))
+	copy(cpy.CacheKeys, ws.CacheKeys)
+	return cpy, true
 }
 
 func sharedPrefixLen(a, b string) float64 {

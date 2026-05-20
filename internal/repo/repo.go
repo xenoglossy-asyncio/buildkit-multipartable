@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -96,7 +97,24 @@ func (d *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_builds_worker ON builds(worker_id);
 	CREATE INDEX IF NOT EXISTS idx_workers_status ON workers(status);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Add columns that may not exist on older databases
+	migrations := []string{
+		`ALTER TABLE builds ADD COLUMN IF NOT EXISTS cache_hit_rate REAL NOT NULL DEFAULT 0`,
+		`ALTER TABLE builds ADD COLUMN IF NOT EXISTS instructions TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE builds ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE builds ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, m := range migrations {
+		if _, err := d.db.Exec(m); err != nil {
+			// Ignore errors (column may already exist on non-PostgreSQL or older syntax)
+			continue
+		}
+	}
+	return nil
 }
 
 // --- BuildRepo ---
@@ -193,6 +211,14 @@ func (r *BuildRepo) CountPending() (int64, error) {
 	defer r.mu.RUnlock()
 	var n int64
 	err := r.db.QueryRow(`SELECT COUNT(*) FROM builds WHERE status='pending'`).Scan(&n)
+	return n, err
+}
+
+func (r *BuildRepo) CountAll() (int64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var n int64
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM builds`).Scan(&n)
 	return n, err
 }
 
@@ -308,12 +334,18 @@ func (r *WorkerRepo) MarkOffline(maxAge time.Duration) error {
 // --- helpers ---
 
 func insertBuild(db *sql.DB, b *domain.Build) error {
-	argsJSON, _ := json.Marshal(b.Args)
-	instrJSON, _ := json.Marshal(b.Instructions)
+	argsJSON, err := json.Marshal(b.Args)
+	if err != nil {
+		return fmt.Errorf("marshal args: %w", err)
+	}
+	instrJSON, err := json.Marshal(b.Instructions)
+	if err != nil {
+		return fmt.Errorf("marshal instructions: %w", err)
+	}
 	now := time.Now().UTC()
 	b.CreatedAt = now
 	b.UpdatedAt = now
-	_, err := db.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,cache_hit_rate,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+	_, err = db.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,cache_hit_rate,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		b.ID, b.Status, b.Fingerprint, b.WorkerID, b.ContextKey, b.Dockerfile, b.ImageTag, string(argsJSON),
 		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, string(instrJSON), b.UserID, b.Priority, b.CacheHitRate,
 		b.CreatedAt.Format(time.RFC3339), b.UpdatedAt.Format(time.RFC3339))
@@ -321,12 +353,18 @@ func insertBuild(db *sql.DB, b *domain.Build) error {
 }
 
 func insertBuildTx(tx *sql.Tx, b *domain.Build) error {
-	argsJSON, _ := json.Marshal(b.Args)
-	instrJSON, _ := json.Marshal(b.Instructions)
+	argsJSON, err := json.Marshal(b.Args)
+	if err != nil {
+		return fmt.Errorf("marshal args: %w", err)
+	}
+	instrJSON, err := json.Marshal(b.Instructions)
+	if err != nil {
+		return fmt.Errorf("marshal instructions: %w", err)
+	}
 	now := time.Now().UTC()
 	b.CreatedAt = now
 	b.UpdatedAt = now
-	_, err := tx.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,cache_hit_rate,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+	_, err = tx.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,cache_hit_rate,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		b.ID, b.Status, b.Fingerprint, b.WorkerID, b.ContextKey, b.Dockerfile, b.ImageTag, string(argsJSON),
 		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, string(instrJSON), b.UserID, b.Priority, b.CacheHitRate,
 		b.CreatedAt.Format(time.RFC3339), b.UpdatedAt.Format(time.RFC3339))
@@ -350,13 +388,17 @@ func listBuilds(db *sql.DB, query string, args ...interface{}) ([]*domain.Build,
 		b.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		b.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 		if argsJSON.Valid {
-			json.Unmarshal([]byte(argsJSON.String), &b.Args)
+			if err := json.Unmarshal([]byte(argsJSON.String), &b.Args); err != nil {
+				slog.Warn("failed to unmarshal build args", "build_id", b.ID, "error", err)
+			}
 		}
 		if b.Args == nil {
 			b.Args = map[string]string{}
 		}
 		if instrJSON.Valid {
-			json.Unmarshal([]byte(instrJSON.String), &b.Instructions)
+			if err := json.Unmarshal([]byte(instrJSON.String), &b.Instructions); err != nil {
+				slog.Warn("failed to unmarshal build instructions", "build_id", b.ID, "error", err)
+			}
 		}
 		if completedAt.Valid {
 			t, _ := time.Parse(time.RFC3339, completedAt.String)
@@ -378,13 +420,17 @@ func scanBuild(row *sql.Row) (*domain.Build, error) {
 	b.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	b.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 	if argsJSON.Valid {
-		json.Unmarshal([]byte(argsJSON.String), &b.Args)
+		if err := json.Unmarshal([]byte(argsJSON.String), &b.Args); err != nil {
+			slog.Warn("failed to unmarshal build args", "build_id", b.ID, "error", err)
+		}
 	}
 	if b.Args == nil {
 		b.Args = map[string]string{}
 	}
 	if instrJSON.Valid {
-		json.Unmarshal([]byte(instrJSON.String), &b.Instructions)
+		if err := json.Unmarshal([]byte(instrJSON.String), &b.Instructions); err != nil {
+			slog.Warn("failed to unmarshal build instructions", "build_id", b.ID, "error", err)
+		}
 	}
 	if completedAt.Valid {
 		t, _ := time.Parse(time.RFC3339, completedAt.String)

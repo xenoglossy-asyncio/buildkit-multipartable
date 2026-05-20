@@ -1,4 +1,5 @@
 """API key authentication."""
+import hmac
 import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -17,16 +18,17 @@ class LoginResponse(BaseModel):
 
 @router.post("/login", response_model=LoginResponse)
 async def login(req: LoginRequest):
-    admin_key = os.getenv("DTBUILD_ADMIN_KEY", "fucking-admin-dtbuildkit")
-    is_admin = req.api_key == admin_key
+    admin_key = os.getenv("DTBUILD_ADMIN_KEY", "")
 
     if not req.api_key:
         # No key — allowed if no auth configured
         api_keys_env = os.getenv("DTBUILD_API_KEYS", "")
         if not api_keys_env:
             return LoginResponse(success=True, is_admin=False)
+        raise HTTPException(status_code=401, detail="API key required")
 
-    if is_admin:
+    # Check admin key using constant-time comparison
+    if admin_key and hmac.compare_digest(req.api_key, admin_key):
         return LoginResponse(success=True, is_admin=True)
 
     # Check against configured API keys

@@ -70,6 +70,9 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions, onLog LogFunc) (*
 		args = append(args, "--export-cache=type=registry,ref="+opts.CacheTo+",mode=max")
 	}
 	for k, v := range opts.BuildArgs {
+		if !isValidBuildArgKey(k) {
+			return nil, fmt.Errorf("invalid build arg key: %q", k)
+		}
 		args = append(args, "--opt=build-arg:"+k+"="+v)
 	}
 
@@ -86,29 +89,45 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions, onLog LogFunc) (*
 		return nil, fmt.Errorf("start buildctl: %w", err)
 	}
 
+	const maxLogBytes = 10 * 1024 * 1024 // 10MB max log buffer
+
 	var logBuf strings.Builder
 	var logWG sync.WaitGroup
 	logWG.Add(1)
 	go func() {
 		defer logWG.Done()
 		scanner := bufio.NewScanner(stderr)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // up to 1MB per line
 		for scanner.Scan() {
 			line := scanner.Text()
-			logBuf.WriteString(line + "\n")
+			if logBuf.Len() < maxLogBytes {
+				logBuf.WriteString(line + "\n")
+			}
 			if onLog != nil {
 				onLog(line + "\n")
 			}
 		}
 	}()
 
-	waitErr := cmd.Wait()
+	// IMPORTANT: logWG.Wait() MUST come before cmd.Wait().
+	// cmd.Wait() closes the stderr pipe (via closeAfterWait), which would
+	// discard any unread data in the kernel buffer. We must ensure the
+	// reading goroutine has fully drained the pipe before that happens.
+	// See: https://pkg.go.dev/os/exec#Cmd.StderrPipe
 	logWG.Wait()
+	waitErr := cmd.Wait()
 
 	if waitErr != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("buildctl failed: %s", logBuf.String())
+		// Truncate error output to avoid leaking excessive build details
+		errOutput := logBuf.String()
+		const maxErrLen = 4096
+		if len(errOutput) > maxErrLen {
+			errOutput = errOutput[len(errOutput)-maxErrLen:]
+		}
+		return nil, fmt.Errorf("buildctl failed: %s", errOutput)
 	}
 
 	result := &BuildResult{}
@@ -118,4 +137,17 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions, onLog LogFunc) (*
 	}
 
 	return result, nil
+}
+
+// isValidBuildArgKey checks that a build arg key contains only safe characters.
+func isValidBuildArgKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, c := range key {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.') {
+			return false
+		}
+	}
+	return true
 }

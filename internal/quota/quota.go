@@ -53,11 +53,11 @@ func (m *Manager) getQuota(userID string) *domain.Quota {
 func (m *Manager) AllowBuild(userID string, requestedTimeout int) (bool, int, string) {
 	q := m.getQuota(userID)
 
-	// Check daily limit
-	m.resetDailyIfNeeded(userID)
-	m.mu.RLock()
+	// Check daily limit under a single lock hold to avoid TOCTOU
+	m.mu.Lock()
+	m.resetDailyIfNeededLocked(userID)
 	daily := m.dailyCount[userID]
-	m.mu.RUnlock()
+	m.mu.Unlock()
 	if q.MaxDaily > 0 && int(daily) >= q.MaxDaily {
 		return false, 0, "daily build limit reached"
 	}
@@ -95,8 +95,8 @@ func (m *Manager) ReleaseConcurrent(userID string) {
 
 // RecordBuild increments daily and storage counters.
 func (m *Manager) RecordBuild(userID string, contextBytes int64) {
-	m.resetDailyIfNeeded(userID)
 	m.mu.Lock()
+	m.resetDailyIfNeededLocked(userID)
 	m.dailyCount[userID]++
 	if contextBytes > 0 {
 		if _, ok := m.storageUse[userID]; !ok {
@@ -131,9 +131,15 @@ func (m *Manager) SetQuota(q *domain.Quota) {
 }
 
 func (m *Manager) resetDailyIfNeeded(userID string) {
-	today := time.Now().UTC().Truncate(24 * time.Hour).Unix()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.resetDailyIfNeededLocked(userID)
+}
+
+// resetDailyIfNeededLocked resets daily counter if the day has changed.
+// Caller must hold m.mu write lock.
+func (m *Manager) resetDailyIfNeededLocked(userID string) {
+	today := time.Now().UTC().Truncate(24 * time.Hour).Unix()
 	if m.dailyReset[userID] != today {
 		m.dailyCount[userID] = 0
 		m.dailyReset[userID] = today

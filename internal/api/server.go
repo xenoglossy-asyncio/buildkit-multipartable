@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -167,11 +168,17 @@ func (s *Server) maintenanceLoop() {
 
 func (s *Server) serveBlob(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimPrefix(r.URL.Path, "/api/v1/blobs/")
-	if key == "" || strings.Contains(key, "..") {
+	if key == "" || strings.Contains(key, "..") || strings.HasPrefix(key, "/") || strings.Contains(key, "\x00") {
 		http.Error(w, "invalid key", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.blobs.Get(key, w); err != nil {
+	// Sanitize: clean path and verify it doesn't escape
+	cleaned := filepath.Clean(key)
+	if cleaned != key || strings.HasPrefix(cleaned, "/") || strings.HasPrefix(cleaned, "..") {
+		http.Error(w, "invalid key", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.blobs.Get(r.Context(), cleaned, w); err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 	}
 }
@@ -208,6 +215,9 @@ func (s *Server) submitBuild(w http.ResponseWriter, r *http.Request) {
 		timeout := req.TimeoutSeconds
 		if timeout <= 0 {
 			timeout = 600
+		}
+		if timeout > 3600 {
+			timeout = 3600
 		}
 		userID := r.Header.Get("X-Api-Key")
 
@@ -248,7 +258,7 @@ func (s *Server) submitBuild(w http.ResponseWriter, r *http.Request) {
 		buildID = uuid.New().String()
 	}
 	ctxKey := fmt.Sprintf("contexts/%s.tar.gz", buildID)
-	if _, err := s.blobs.Put(ctxKey, contextFile); err != nil {
+	if _, err := s.blobs.Put(r.Context(), ctxKey, contextFile); err != nil {
 		http.Error(w, "store context: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -294,7 +304,7 @@ func (s *Server) submitBulkBuild(w http.ResponseWriter, r *http.Request) {
 
 		// Download bulk context from S3 for Dockerfile discovery
 		var buf bytes.Buffer
-		if _, err := s.blobs.Get(req.ContextKey, &buf); err != nil {
+		if _, err := s.blobs.Get(r.Context(), req.ContextKey, &buf); err != nil {
 			http.Error(w, "fetch bulk context from storage: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -354,14 +364,27 @@ func (s *Server) listBuilds(w http.ResponseWriter, r *http.Request) {
 	if o := r.URL.Query().Get("offset"); o != "" {
 		fmt.Sscanf(o, "%d", &offset)
 	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
 
-	builds, err := s.db.Builds.List(1000) // get all then slice — fine for <10K builds
+	builds, err := s.db.Builds.List(offset + limit) // fetch only what's needed for current page
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	total := len(builds)
+	total, err := s.db.Builds.CountAll()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	// Slice for pagination
 	if offset < len(builds) {
 		end := offset + limit
@@ -453,7 +476,10 @@ func (s *Server) completeBuild(w http.ResponseWriter, r *http.Request) {
 
 	// Compute and store cache hit rate from logs
 	if body.Status == domain.StatusSucceeded {
-		b, _ := s.db.Builds.Get(id)
+		b, err := s.db.Builds.Get(id)
+		if err != nil {
+			slog.Warn("failed to fetch build for cache rate", "id", id, "error", err)
+		}
 		if b != nil && b.Logs != "" {
 			var hits, total int
 			lines := strings.Split(b.Logs, "\n")
@@ -500,7 +526,9 @@ func (s *Server) completeBuild(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if total > 0 {
-				s.db.Builds.SetCacheRate(id, float64(hits)/float64(total)*100)
+				if err := s.db.Builds.SetCacheRate(id, float64(hits)/float64(total)*100); err != nil {
+					slog.Warn("failed to set cache rate", "id", id, "error", err)
+				}
 			}
 		}
 	}
