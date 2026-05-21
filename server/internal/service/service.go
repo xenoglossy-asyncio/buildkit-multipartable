@@ -15,7 +15,6 @@ import (
 	"github.com/xenoglossy/dtbuildkit/internal/fingerprint"
 	"github.com/xenoglossy/dtbuildkit/internal/oss"
 	"github.com/xenoglossy/dtbuildkit/internal/queue"
-	"github.com/xenoglossy/dtbuildkit/internal/quota"
 	"github.com/xenoglossy/dtbuildkit/internal/repo"
 	"github.com/xenoglossy/dtbuildkit/internal/scheduler"
 	"github.com/xenoglossy/dtbuildkit/internal/validate"
@@ -27,15 +26,15 @@ type BuildService struct {
 	blobs     oss.BlobStore
 	scheduler *scheduler.Scheduler
 	queue     *queue.Queue
-	quota     *quota.Manager
 }
 
 // NewBuildService creates a new build service.
-func NewBuildService(r *repo.BuildRepo, blobs oss.BlobStore, sched *scheduler.Scheduler, q *queue.Queue, qm *quota.Manager) *BuildService {
-	return &BuildService{repo: r, blobs: blobs, scheduler: sched, queue: q, quota: qm}
+func NewBuildService(r *repo.BuildRepo, blobs oss.BlobStore, sched *scheduler.Scheduler, q *queue.Queue) *BuildService {
+	return &BuildService{repo: r, blobs: blobs, scheduler: sched, queue: q}
 }
 
 // SubmitBuild creates a new build. If buildID is empty, one is generated.
+// Quota enforcement is handled by the FastAPI gateway before calling this.
 func (s *BuildService) SubmitBuild(buildID, ctxKey string, dockerfileContent []byte, imageTag string, userID string, timeoutSec int, args map[string]string) (*domain.Build, error) {
 	// Pre-flight validation
 	v := validate.Single(validate.BuildInput{
@@ -51,15 +50,6 @@ func (s *BuildService) SubmitBuild(buildID, ctxKey string, dockerfileContent []b
 	}
 	fp := fingerprint.FromDockerfile(dockerfileContent)
 
-	// Quota check
-	ok, effectiveTimeout, reason := s.quota.AllowBuild(userID, timeoutSec)
-	if !ok {
-		return nil, fmt.Errorf("quota exceeded: %s", reason)
-	}
-	if !s.quota.ReserveConcurrent(userID) {
-		return nil, fmt.Errorf("concurrent build limit reached")
-	}
-
 	b := &domain.Build{
 		ID:             buildID,
 		Status:         domain.StatusPending,
@@ -69,23 +59,22 @@ func (s *BuildService) SubmitBuild(buildID, ctxKey string, dockerfileContent []b
 		ImageTag:       imageTag,
 		Args:           args,
 		Instructions:   fp.Instructions,
-		TimeoutSeconds: effectiveTimeout,
+		TimeoutSeconds: timeoutSec,
 		UserID:         userID,
 		Priority:       0,
 	}
 
 	if err := s.repo.Create(b); err != nil {
-		s.quota.ReleaseConcurrent(userID)
 		return nil, fmt.Errorf("create build: %w", err)
 	}
 
-	s.quota.RecordBuild(userID, 0) // storage tracked separately
 	s.queue.Push(b)
 
 	return b, nil
 }
 
 // SubmitBulkBuild creates multiple builds from discovered Dockerfiles.
+// Quota enforcement is handled by the FastAPI gateway before calling this.
 func (s *BuildService) SubmitBulkBuild(contextData []byte, tagPrefix string, userID string) ([]*domain.Build, error) {
 	subdirs, err := discoverBulkDockerfiles(bytes.NewReader(contextData))
 	if err != nil {
@@ -107,16 +96,6 @@ func (s *BuildService) SubmitBulkBuild(contextData []byte, tagPrefix string, use
 	v := validate.Bulk(bulkEntries)
 	if !v.Valid() {
 		return nil, fmt.Errorf("validation failed: %s", strings.Join(v.Errors, "; "))
-	}
-
-	// Apply quota — check each build slot (both daily and concurrent)
-	for i := 0; i < len(subdirs); i++ {
-		if ok, _, reason := s.quota.AllowBuild(userID, 600); !ok {
-			return nil, fmt.Errorf("quota exceeded at build %d/%d: %s", i+1, len(subdirs), reason)
-		}
-		if !s.quota.ReserveConcurrent(userID) {
-			return nil, fmt.Errorf("concurrent limit exceeded at build %d/%d", i+1, len(subdirs))
-		}
 	}
 
 	var builds []*domain.Build
@@ -211,7 +190,6 @@ func (s *BuildService) CompleteBuild(id string, status domain.Status, errMsg str
 		slog.Warn("complete: failed to fetch build for cleanup", "id", id, "error", err)
 		return nil
 	}
-	s.quota.ReleaseConcurrent(b.UserID)
 	if b.WorkerID != "" {
 		s.scheduler.MarkWorkerIdle(b.WorkerID, []string{b.Fingerprint})
 	}

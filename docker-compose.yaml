@@ -31,6 +31,21 @@ services:
       - "6379:6379"
     restart: unless-stopped
 
+  # ---- MinIO (S3-compatible object storage) ----
+  minio:
+    image: minio/minio:latest
+    container_name: dtbuild-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+
   # ---- Registry (S3-backed) ----
   registry:
     image: registry:2
@@ -67,6 +82,9 @@ services:
       - "8640:8640"
     volumes:
       - server-data:/data
+    depends_on:
+      - postgres
+      - minio
     restart: unless-stopped
 
   # ---- Web (nginx + frontend SPA) ----
@@ -90,7 +108,10 @@ services:
       BUILD_SERVICE: http://server:8640
       DTBUILD_ADMIN_KEY: fucking-admin-dtbuildkit
       REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://dtbuild:dtbuild@postgres:5432/dtbuildkit
     depends_on:
+      - postgres
+      - redis
       - server
     restart: unless-stopped
 
@@ -210,3 +231,4 @@ volumes:
   worker-data-4:
   worker-data-5:
   pg-data:
+  minio-data:

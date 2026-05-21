@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { streamLogs, type Build } from "../lib/api";
+import { streamLogs, getBuild, type Build } from "../lib/api";
 
 interface Props {
   build: Build;
@@ -14,6 +14,15 @@ export default function LogModal({ build, onClose }: Props) {
   useEffect(() => {
     setLogs(build.logs || "");
   }, [build.logs]);
+
+  // Fetch logs from API if not present (list API excludes logs)
+  useEffect(() => {
+    if (!build.logs && !useSSE) {
+      getBuild(build.id).then((full) => {
+        if (full?.logs) setLogs(full.logs);
+      }).catch(() => {});
+    }
+  }, [build.id, build.logs, useSSE]);
 
   useEffect(() => {
     if (!useSSE) return;
@@ -79,7 +88,7 @@ export default function LogModal({ build, onClose }: Props) {
         </div>
         <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 12 }}>
           {build.image_tag} • {build.status}
-          {build.error && <span style={{ color: "var(--red)", marginLeft: 8 }}>• {build.error}</span>}
+          {build.error && <span style={{ color: "var(--red)", marginLeft: 8 }}>• {build.error.split("\n")[0].substring(0, 100)}</span>}
         </div>
         <div className="logs" style={{ flex: 1, overflow: "auto" }}>
           {logs || <span className="logs-placeholder">No logs yet...</span>}

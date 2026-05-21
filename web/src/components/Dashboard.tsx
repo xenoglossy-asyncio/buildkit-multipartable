@@ -28,7 +28,7 @@ export default function Dashboard() {
   useEffect(() => {
     // Show cached data instantly
     const cached = getCached("dashboard", 10000);
-    if (cached) { setStats(cached.s); setAvg(cached.a); setUsers(cached.u); setRunning(cached.r); }
+    if (cached) { setStats(cached.s); setAvg(cached.a); setUsers(cached.u || []); setRunning(cached.r || []); }
 
     const controller = new AbortController();
     const load = async () => {

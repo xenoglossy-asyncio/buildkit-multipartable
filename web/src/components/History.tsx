@@ -29,7 +29,7 @@ export default function History() {
   useEffect(() => {
     const key = `history-${d}`;
     const cached = getCached(key, 10000);
-    if (cached) { setDaily(cached.dl); setUsers(cached.us); setStats(cached.st); setAvg(cached.av); }
+    if (cached) { setDaily(cached.dl); setUsers(cached.us || []); setStats(cached.st); setAvg(cached.av); }
     else {
       // Clear old data while loading new data
       setDaily(null);

@@ -26,15 +26,16 @@ Four-tier microservice architecture:
    - Immutable cache headers for `/assets/`
 
 2. **API** (FastAPI, sourced from `api/`) — API gateway on port 8100 (host) / 3000 (container)
-   - Auth, dashboard, admin panel, build submission
+   - Auth (DB-backed API keys), quota enforcement, API key management
+   - Direct PostgreSQL access via asyncpg (stats, builds, quotas, keys)
    - Uploads build contexts directly to S3 (boto3)
-   - Sends JSON metadata to Go server (no file proxying)
+   - Sends JSON metadata to Go server for build submission only
    - Redis-cached stats (30s TTL, background refresh)
 
 3. **Server** (Go + chi, sourced from `server/`) — Internal build engine on port 8640
    - Build CRUD, scheduling, worker management
    - SSE log streaming, Prometheus metrics
-   - No auth layer (internal only)
+   - No auth, no quotas, no stats queries (pure build engine)
 
 4. **Worker** (Go + buildkitd subprocess, sourced from `server/`) — Build execution
    - Polls server for next build via consistent hash ring
@@ -43,10 +44,10 @@ Four-tier microservice architecture:
    - Shares buildkitd daemon, registry-backed cache
 
 **Supporting services:**
-- PostgreSQL 16 (builds, workers, quotas)
+- PostgreSQL 16 (builds, workers, quotas, api_keys)
 - Redis 7 (stats cache)
 - Registry:2 (S3-backed OCI storage)
-- MinIO/S3 (build context storage)
+- MinIO/S3 (build context storage + registry backend)
 - BuildKit daemon (shared by all workers)
 
 ## Development Setup
@@ -127,6 +128,7 @@ uv sync              # Install dependencies
 uv run uvicorn main:app --reload --port 8100
 
 # Environment variables
+export DATABASE_URL=postgres://dtbuild:dtbuild@localhost:5432/dtbuildkit
 export BUILD_SERVICE=http://localhost:8640
 export DTBUILD_ADMIN_KEY=fucking-admin-dtbuildkit
 export REDIS_URL=redis://localhost:6379
@@ -172,12 +174,6 @@ Priority queue for pending builds. Higher priority = processed first. Supports:
 - Remove by ID
 - Backpressure (max 10K queued)
 
-### `internal/quota`
-Per-user resource limits:
-- Max concurrent builds
-- Max builds per day
-- Enforced at submission time
-
 ### `internal/fingerprint`
 Dockerfile content fingerprinting for cache affinity. Extracts:
 - Base image (FROM lines)
@@ -197,10 +193,11 @@ S3/MinIO blob store for build contexts. Supports local filesystem fallback.
 PostgreSQL persistence layer using pgx/v5. Tables:
 - `builds` — build records with status, logs, cache_hit_rate
 - `workers` — worker registration, heartbeat, cache keys
-- `quotas` — per-user limits
+- `quotas` — per-user limits (managed by FastAPI, read by Go for reference)
+- `api_keys` — API key hashes (managed entirely by FastAPI)
 
 ### `internal/api`
-HTTP handlers (chi router), SSE log broker, Prometheus metrics.
+HTTP handlers (chi router), SSE log broker, Prometheus metrics. No auth, no stats, no quota enforcement.
 
 ## Build Lifecycle
 
@@ -251,8 +248,9 @@ React SPA with tab-based navigation:
 - `DTBUILD_ADMIN_KEY` — Admin API key
 
 ### FastAPI Gateway
-- `BUILD_SERVICE` — Go server URL (default: `http://server:8640`)
-- `DTBUILD_ADMIN_KEY` — Admin key (must match server)
+- `DATABASE_URL` — PostgreSQL connection for asyncpg (default: `postgres://dtbuild:dtbuild@postgres:5432/dtbuildkit`)
+- `BUILD_SERVICE` — Go server URL for build submission/cancel (default: `http://server:8640`)
+- `DTBUILD_ADMIN_KEY` — Admin key (env fallback for auth)
 - `REDIS_URL` — Redis connection (default: `redis://redis:6379`)
 - `S3_ENDPOINT` — MinIO/S3 endpoint for direct context upload
 - `S3_ACCESS_KEY` / `S3_SECRET_KEY` — S3 credentials
@@ -282,7 +280,6 @@ go test -race ./...
 Test coverage:
 - `internal/fingerprint` — Dockerfile parsing, hash stability
 - `internal/queue` — Priority queue operations
-- `internal/quota` — Concurrent limit enforcement
 - `internal/scheduler` — Consistent hashing, affinity scoring
 
 ## Deployment Notes
@@ -301,13 +298,19 @@ Test coverage:
 - Running via Docker Compose
 - 5 workers active
 - Web (nginx) on port 3000, API (FastAPI) on port 8100, Server on port 8640
-- PostgreSQL on 5432, Redis on 6379, Registry on 5000
+- PostgreSQL on 5432, Redis on 6379, Registry on 5000, MinIO on 9000
 
 ## Key Design Decisions
 
+**Decoupled service responsibilities:** Go server is a pure build engine (builds, logs, scheduling, workers). FastAPI owns all user-facing logic: auth, quotas, API keys, stats. FastAPI connects directly to PostgreSQL via asyncpg. Go server is only called for build submission, cancellation, and SSE log streaming.
+
+**DB-backed API keys:** API keys stored as SHA-256 hashes in PostgreSQL `api_keys` table. Validated at the FastAPI layer. Env var `DTBUILD_ADMIN_KEY` serves as fallback.
+
+**Quota enforcement in FastAPI:** Per-user limits (concurrent + daily) checked in FastAPI before forwarding build submission to Go. Quotas managed via admin API, stored in PostgreSQL.
+
 **Cache hit rate in DB:** Computed once at build completion, stored in column. No log parsing at query time.
 
-**Redis stats cache:** FastAPI refreshes all stats in Redis every 30s. Frontend reads from Redis → instant response.
+**Redis stats cache:** FastAPI queries PostgreSQL directly for stats, caches results in Redis every 30s. Frontend reads from Redis → instant response.
 
 **sessionStorage for tabs:** Dashboard/History/Builds/Admin cache data in sessionStorage. Tab switches show cached data instantly.
 

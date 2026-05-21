@@ -54,7 +54,7 @@ export default function BuildDetail({ id, onClose }: Props) {
         <div className="detail-meta">
           <span>{build.image_tag}</span>
           <span className={`build-status ${STATUS_CLASS[build.status] || ""}`}>{build.status}</span>
-          {build.error && <span className="detail-error">{build.error}</span>}
+          {build.error && <span className="detail-error">{build.error.split("\n")[0].substring(0, 100)}</span>}
         </div>
       )}
       <div className="logs">

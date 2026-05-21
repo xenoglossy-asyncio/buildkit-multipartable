@@ -5,9 +5,10 @@ import uuid
 
 import httpx
 from fastapi import APIRouter, Request, UploadFile, Form, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse
 
-from services import buildkit, s3
+from services import buildkit, s3, queries
+from services.database import get_pool
 
 router = APIRouter(prefix="/api/v1", tags=["builds"])
 
@@ -32,6 +33,22 @@ async def submit_build(
         raise HTTPException(status_code=413, detail=f"context too large (max {MAX_CONTEXT_SIZE // 1024 // 1024}MB)")
     if len(data) == 0:
         raise HTTPException(status_code=400, detail="context file is empty")
+
+    # Extract user_id from API key header
+    user_id = request.headers.get("x-api-key", "")
+
+    # Quota enforcement
+    pool = get_pool()
+    quota = await queries.get_quota(pool, user_id)
+    if quota:
+        if quota["max_concurrent"] > 0:
+            concurrent = await queries.check_concurrent(pool, user_id)
+            if concurrent >= quota["max_concurrent"]:
+                raise HTTPException(status_code=429, detail="concurrent build limit reached")
+        if quota["max_daily"] > 0:
+            daily = await queries.check_daily(pool, user_id)
+            if daily >= quota["max_daily"]:
+                raise HTTPException(status_code=429, detail="daily build limit reached")
 
     build_id = str(uuid.uuid4())
     try:
@@ -69,20 +86,20 @@ async def submit_bulk(
 @router.get("/builds")
 async def list_builds(request: Request, limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0)):
     try:
-        return await buildkit.list_builds(request, limit, offset)
+        pool = get_pool()
+        return await queries.list_builds(pool, limit, offset)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/builds/{build_id}")
 async def get_build(request: Request, build_id: str):
     _validate_build_id(build_id)
-    try:
-        return await buildkit.get_build(request, build_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    pool = get_pool()
+    build = await queries.get_build(pool, build_id)
+    if not build:
+        raise HTTPException(status_code=404, detail="build not found")
+    return build
 
 
 @router.get("/builds/{build_id}/logs")
@@ -109,12 +126,13 @@ async def get_build_logs(request: Request, build_id: str, stream: str = Query(de
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
-    try:
-        return await buildkit.get_build_logs(request, build_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
+
+    # Non-streaming: read logs directly from DB
+    pool = get_pool()
+    logs = await queries.get_build_logs(pool, build_id)
+    if logs is None:
+        raise HTTPException(status_code=404, detail="build not found")
+    return PlainTextResponse(logs)
 
 
 @router.delete("/builds/{build_id}")

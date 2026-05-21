@@ -18,7 +18,6 @@ import (
 	"github.com/xenoglossy/dtbuildkit/internal/domain"
 	"github.com/xenoglossy/dtbuildkit/internal/oss"
 	"github.com/xenoglossy/dtbuildkit/internal/queue"
-	"github.com/xenoglossy/dtbuildkit/internal/quota"
 	"github.com/xenoglossy/dtbuildkit/internal/repo"
 	"github.com/xenoglossy/dtbuildkit/internal/scheduler"
 	"github.com/xenoglossy/dtbuildkit/internal/service"
@@ -51,10 +50,9 @@ func NewServer(addr string, dbPath string, blobBasePath string) (*Server, error)
 	}
 
 	sched := scheduler.New()
-	quotaMgr := quota.NewManager(nil) // quotas loaded from DB on demand
-	taskQueue := queue.New(10000)      // max 10K queued builds
+	taskQueue := queue.New(10000) // max 10K queued builds
 
-	buildSvc := service.NewBuildService(d.Builds, blobs, sched, taskQueue, quotaMgr)
+	buildSvc := service.NewBuildService(d.Builds, blobs, sched, taskQueue)
 	workerSvc := service.NewWorkerService(d.Workers, d.Builds, sched)
 	maint := service.NewMaintenance(d.Builds, d.Workers)
 
@@ -106,21 +104,7 @@ func (s *Server) setupRoutes() {
 
 		// Admin endpoints (internal, used by FastAPI service)
 		r.Get("/admin/health", s.adminHealth)
-		r.Get("/admin/stats", s.adminStats)
-		r.Get("/admin/quotas/{user_id}", s.getQuota)
-		r.Put("/admin/quotas/{user_id}", s.setQuota)
-		r.Delete("/admin/quotas/{user_id}", s.deleteQuota)
-		r.Get("/admin/keys", s.listAPIKeys)
-		r.Post("/admin/keys", s.createAPIKey)
-		r.Delete("/admin/keys/{user_id}", s.revokeAPIKey)
 		r.Post("/admin/builds/cleanup", s.manualGC)
-
-		// Stats (used by FastAPI dashboard)
-		r.Get("/stats", s.publicStats)
-		r.Get("/stats/daily", s.dailyStats)
-		r.Get("/stats/averages", s.averageStats)
-		r.Get("/stats/users", s.userStats)
-		r.Get("/stats/running", s.runningBuilds)
 	})
 
 	s.router.Get("/metrics", metricsHandler)
