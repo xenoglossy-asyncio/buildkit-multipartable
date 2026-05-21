@@ -171,6 +171,8 @@ curl http://localhost:8640/metrics
 | **Builds** | Paginated list (10/20/50/100 per page), ID/Tag/User/Time/Cache/Status columns, live SSE logs in detail panel |
 | **Admin** | Overview (health + stats), Users (table with expandable quota editing), API key management |
 
+**Mobile responsive:** CSS media queries at 768px (tablet) and 480px (phone). Progressive column hiding, single-column admin grid, near-fullscreen log modal, 44px touch targets.
+
 ## API Reference
 
 ### Go Build Engine (`:8640` — internal only)
@@ -265,9 +267,10 @@ FastAPI owns all user-facing logic: auth, quotas, API keys, stats queries. FastA
 to PostgreSQL via asyncpg for reads (builds, stats) and user data writes (quotas, keys). Go server
 is only called for build submission, cancellation, and SSE log streaming.
 
-**Cache hit rate stored in DB.** Computed at build completion from log output
-(CACHED lines / total lines), stored in `cache_hit_rate` column. Stats queries
-read the column directly — no log parsing at query time.
+**Cache hit rate stored in DB.** Worker computes cache rate from `buildctl --progress=rawjson`
+structured output (per-vertex `cached` boolean, user steps only, excluding FROM).
+Reported to server at build completion, stored in `cache_hit_rate` column.
+Stats queries read the column directly — no log parsing at query time.
 
 **Redis stats cache.** FastAPI refreshes all stats endpoints in Redis every 30s.
 Frontend reads from Redis → instant response, no DB queries on page load.

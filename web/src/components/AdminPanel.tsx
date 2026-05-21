@@ -86,7 +86,7 @@ export default function AdminPanel() {
 
       {page === "overview" && (
         <div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+          <div className="admin-grid">
             <div className="card">
               <h2>System Health</h2>
               {health ? (

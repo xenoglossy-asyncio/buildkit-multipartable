@@ -184,7 +184,7 @@ Dockerfile content fingerprinting for cache affinity. Extracts:
 Produces stable SHA256 hash used by scheduler.
 
 ### `internal/buildkit`
-Subprocess wrapper for `buildctl build`. Streams stderr line-by-line, parses cache hit rate from CACHED markers.
+Subprocess wrapper for `buildctl build`. Uses `--progress=rawjson` to get structured JSON output with per-vertex `cached` boolean. Computes cache hit rate from user steps (matching `[M/N]` pattern, excluding FROM) and reconstructs human-readable logs from raw JSON.
 
 ### `internal/oss`
 S3/MinIO blob store for build contexts. Supports local filesystem fallback.
@@ -213,12 +213,15 @@ HTTP handlers (chi router), SSE log broker, Prometheus metrics. No auth, no stat
 
 ## Cache Hit Rate
 
-Computed at build completion from buildctl stderr:
+Computed by the worker at build time using `buildctl --progress=rawjson`. Each vertex in the JSON output has a `cached` boolean field. Only user steps matching `[M/N]` pattern are counted (excludes `[internal]` load metadata steps and `FROM` steps, since FROM cache status reflects base image layer availability in buildkitd, not build cache affinity). The worker reports the computed rate to the server via the build completion API.
+
 ```
-cache_hit_rate = CACHED lines / total lines
+cache_hit_rate = cached_user_steps / total_user_steps * 100
 ```
 
-Stored in `builds.cache_hit_rate` column. Stats queries read directly from DB (no log parsing).
+A sentinel value of -1 means cache rate was not computed (e.g., build failed before completion).
+
+Stored in `builds.cache_hit_rate` column. Stats queries read directly from DB.
 
 ## Frontend Architecture
 
@@ -228,6 +231,8 @@ React SPA with tab-based navigation:
 - **Submit** — Dockerfile upload or folder upload (tar.gz in browser)
 - **Builds** — Build list + detail panel with SSE log streaming
 - **Admin** — Quotas, API keys, health checks (admin only)
+
+**Mobile responsive:** CSS media queries at 768px (tablet) and 480px (phone) breakpoints. Progressive column hiding for build list, single-column admin grid, near-fullscreen log modal, 44px touch targets on phone.
 
 **sessionStorage caching:** Each tab caches data in sessionStorage. Tab switches show cached data instantly, then refresh in background.
 
@@ -308,7 +313,7 @@ Test coverage:
 
 **Quota enforcement in FastAPI:** Per-user limits (concurrent + daily) checked in FastAPI before forwarding build submission to Go. Quotas managed via admin API, stored in PostgreSQL.
 
-**Cache hit rate in DB:** Computed once at build completion, stored in column. No log parsing at query time.
+**Cache hit rate in DB:** Worker computes cache rate from `buildctl --progress=rawjson` structured output (per-vertex `cached` boolean, user steps only, excluding FROM). Reported to server at build completion, stored in column. No log parsing at query time.
 
 **Redis stats cache:** FastAPI queries PostgreSQL directly for stats, caches results in Redis every 30s. Frontend reads from Redis → instant response.
 

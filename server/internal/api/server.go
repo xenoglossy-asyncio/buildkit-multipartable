@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -87,7 +86,6 @@ func (s *Server) setupRoutes() {
 	s.router.Route("/api/v1", func(r chi.Router) {
 		// Build endpoints
 		r.Post("/builds", s.submitBuild)
-		r.Post("/builds/bulk", s.submitBulkBuild)
 		r.Get("/builds", s.listBuilds)
 		r.Get("/builds/next", s.getNextBuild)
 		r.Get("/builds/{id}", s.getBuild)
@@ -258,87 +256,6 @@ func (s *Server) submitBuild(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(build)
 }
 
-func (s *Server) submitBulkBuild(w http.ResponseWriter, r *http.Request) {
-	ct := r.Header.Get("Content-Type")
-
-	var data []byte
-	var tagPrefix string
-	var userID string
-
-	// JSON path: context already in S3, download from S3 for parsing.
-	if strings.HasPrefix(ct, "application/json") {
-		var req struct {
-			ContextKey string `json:"context_key"`
-			TagPrefix  string `json:"tag_prefix"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		if req.ContextKey == "" {
-			http.Error(w, "missing context_key", http.StatusBadRequest)
-			return
-		}
-		tagPrefix = req.TagPrefix
-		if tagPrefix == "" {
-			http.Error(w, "missing tag_prefix", http.StatusBadRequest)
-			return
-		}
-		userID = r.Header.Get("X-Api-Key")
-
-		// Download bulk context from S3 for Dockerfile discovery
-		var buf bytes.Buffer
-		if _, err := s.blobs.Get(r.Context(), req.ContextKey, &buf); err != nil {
-			http.Error(w, "fetch bulk context from storage: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		data = buf.Bytes()
-	} else {
-		// Multipart path (CLI backward compat).
-		if err := r.ParseMultipartForm(500 << 20); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		contextFile, _, err := r.FormFile("context")
-		if err != nil {
-			http.Error(w, "missing context", http.StatusBadRequest)
-			return
-		}
-		defer contextFile.Close()
-
-		tagPrefix = r.FormValue("tag_prefix")
-		if tagPrefix == "" {
-			http.Error(w, "missing tag_prefix", http.StatusBadRequest)
-			return
-		}
-		userID = r.Header.Get("X-Api-Key")
-
-		var readErr error
-		data, readErr = io.ReadAll(contextFile)
-		if readErr != nil {
-			http.Error(w, "read context: "+readErr.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-
-	if !strings.HasSuffix(tagPrefix, "/") && !strings.HasSuffix(tagPrefix, "-") {
-		tagPrefix += "/"
-	}
-
-	builds, err := s.buildSvc.SubmitBulkBuild(data, tagPrefix, userID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"count":  len(builds),
-		"builds": builds,
-	})
-}
-
 func (s *Server) listBuilds(w http.ResponseWriter, r *http.Request) {
 	limit := 20
 	offset := 0
@@ -446,8 +363,9 @@ func (s *Server) appendLog(w http.ResponseWriter, r *http.Request) {
 func (s *Server) completeBuild(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var body struct {
-		Status      domain.Status `json:"status"`
-		Error       string        `json:"error,omitempty"`
+		Status       domain.Status `json:"status"`
+		Error        string        `json:"error,omitempty"`
+		CacheHitRate float64       `json:"cache_hit_rate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -458,64 +376,13 @@ func (s *Server) completeBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compute and store cache hit rate from logs
-	if body.Status == domain.StatusSucceeded {
-		b, err := s.db.Builds.Get(id)
-		if err != nil {
-			slog.Warn("failed to fetch build for cache rate", "id", id, "error", err)
-		}
-		if b != nil && b.Logs != "" {
-			var hits, total int
-			lines := strings.Split(b.Logs, "\n")
-			// Match lines like: #7 [3/6] RUN apt-get install...
-			// Pattern: #N [M/T] where N, M, T are numbers
-			for i, line := range lines {
-				// Must start with # followed by number, then space, then [number/number]
-				if len(line) < 5 || line[0] != '#' {
-					continue
-				}
-				// Find the bracket pattern [M/T]
-				bracketStart := strings.Index(line, "[")
-				bracketEnd := strings.Index(line, "]")
-				if bracketStart == -1 || bracketEnd == -1 || bracketEnd <= bracketStart {
-					continue
-				}
-				bracketContent := line[bracketStart+1 : bracketEnd]
-				// Check if it's M/T format (two numbers separated by /)
-				if !strings.Contains(bracketContent, "/") {
-					continue
-				}
-				parts := strings.Split(bracketContent, "/")
-				if len(parts) != 2 {
-					continue
-				}
-				// Verify both parts are numbers
-				var m, t int
-				if _, err := fmt.Sscanf(parts[0], "%d", &m); err != nil {
-					continue
-				}
-				if _, err := fmt.Sscanf(parts[1], "%d", &t); err != nil {
-					continue
-				}
-
-				// This is a valid layer line, check next line for CACHED/DONE
-				if i+1 < len(lines) {
-					nextLine := lines[i+1]
-					if strings.Contains(nextLine, "CACHED") {
-						hits++
-						total++
-					} else if strings.Contains(nextLine, "DONE") {
-						total++
-					}
-				}
-			}
-			if total > 0 {
-				if err := s.db.Builds.SetCacheRate(id, float64(hits)/float64(total)*100); err != nil {
-					slog.Warn("failed to set cache rate", "id", id, "error", err)
-				}
-			}
+	// Store cache hit rate reported by worker (computed from rawjson vertex data)
+	if body.CacheHitRate >= 0 {
+		if err := s.db.Builds.SetCacheRate(id, body.CacheHitRate); err != nil {
+			slog.Warn("failed to set cache rate", "id", id, "error", err)
 		}
 	}
+
 	metrics.BuildsTotal.Add(1)
 	w.WriteHeader(http.StatusOK)
 }

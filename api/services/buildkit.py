@@ -25,13 +25,6 @@ async def submit_build(request: Request, build_id: str, context_key: str, docker
     return resp.json()
 
 
-async def submit_bulk(request: Request, context_key: str, tag_prefix: str) -> dict:
-    payload = {"context_key": context_key, "tag_prefix": tag_prefix}
-    resp = await build_client(request).post("/api/v1/builds/bulk", json=payload)
-    resp.raise_for_status()
-    return resp.json()
-
-
 async def cancel_build(request: Request, build_id: str) -> None:
     resp = await build_client(request).delete(f"/api/v1/builds/{build_id}")
     resp.raise_for_status()

@@ -84,14 +84,6 @@ func (d *DB) migrate() error {
 		last_heartbeat TEXT NOT NULL,
 		cache_keys TEXT NOT NULL DEFAULT '[]'
 	);
-	CREATE TABLE IF NOT EXISTS quotas (
-		user_id TEXT PRIMARY KEY,
-		max_concurrent INTEGER NOT NULL DEFAULT 0,
-		max_daily INTEGER NOT NULL DEFAULT 0,
-		max_storage_bytes INTEGER NOT NULL DEFAULT 0,
-		max_timeout_sec INTEGER NOT NULL DEFAULT 0
-	);
-
 	CREATE INDEX IF NOT EXISTS idx_builds_status ON builds(status);
 	CREATE INDEX IF NOT EXISTS idx_builds_user ON builds(user_id);
 	CREATE INDEX IF NOT EXISTS idx_builds_worker ON builds(worker_id);
@@ -128,22 +120,6 @@ func (r *BuildRepo) Create(b *domain.Build) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return insertBuild(r.db, b)
-}
-
-func (r *BuildRepo) CreateBatch(builds []*domain.Build) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	tx, err := r.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, b := range builds {
-		if err := insertBuildTx(tx, b); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 func (r *BuildRepo) Get(id string) (*domain.Build, error) {
@@ -273,28 +249,6 @@ func (r *BuildRepo) CountUserDaily(userID string) (int64, error) {
 	return n, err
 }
 
-// GetQuota returns the quota for a user.
-func (r *BuildRepo) GetQuota(userID string) (*domain.Quota, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	var q domain.Quota
-	err := r.db.QueryRow(`SELECT user_id,max_concurrent,max_daily,max_storage_bytes,max_timeout_sec FROM quotas WHERE user_id=$1`, userID).Scan(&q.UserID, &q.MaxConcurrent, &q.MaxDaily, &q.MaxStorageBytes, &q.MaxTimeoutSec)
-	if err != nil {
-		return nil, err
-	}
-	return &q, nil
-}
-
-// SetQuota inserts or updates a quota.
-func (r *BuildRepo) SetQuota(q *domain.Quota) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	_, err := r.db.Exec(`INSERT INTO quotas (user_id,max_concurrent,max_daily,max_storage_bytes,max_timeout_sec) VALUES ($1,$2,$3,$4,$5) ON CONFLICT(user_id) DO UPDATE SET max_concurrent=$6,max_daily=$7,max_storage_bytes=$8,max_timeout_sec=$9`,
-		q.UserID, q.MaxConcurrent, q.MaxDaily, q.MaxStorageBytes, q.MaxTimeoutSec,
-		q.MaxConcurrent, q.MaxDaily, q.MaxStorageBytes, q.MaxTimeoutSec)
-	return err
-}
-
 // --- WorkerRepo ---
 
 type WorkerRepo struct {
@@ -346,25 +300,6 @@ func insertBuild(db *sql.DB, b *domain.Build) error {
 	b.CreatedAt = now
 	b.UpdatedAt = now
 	_, err = db.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,cache_hit_rate,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
-		b.ID, b.Status, b.Fingerprint, b.WorkerID, b.ContextKey, b.Dockerfile, b.ImageTag, string(argsJSON),
-		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, string(instrJSON), b.UserID, b.Priority, b.CacheHitRate,
-		b.CreatedAt.Format(time.RFC3339), b.UpdatedAt.Format(time.RFC3339))
-	return err
-}
-
-func insertBuildTx(tx *sql.Tx, b *domain.Build) error {
-	argsJSON, err := json.Marshal(b.Args)
-	if err != nil {
-		return fmt.Errorf("marshal args: %w", err)
-	}
-	instrJSON, err := json.Marshal(b.Instructions)
-	if err != nil {
-		return fmt.Errorf("marshal instructions: %w", err)
-	}
-	now := time.Now().UTC()
-	b.CreatedAt = now
-	b.UpdatedAt = now
-	_, err = tx.Exec(`INSERT INTO builds (id,status,fingerprint,worker_id,context_key,dockerfile,image_tag,args,retry_count,max_retries,timeout_seconds,instructions,user_id,priority,cache_hit_rate,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		b.ID, b.Status, b.Fingerprint, b.WorkerID, b.ContextKey, b.Dockerfile, b.ImageTag, string(argsJSON),
 		b.RetryCount, b.MaxRetries, b.TimeoutSeconds, string(instrJSON), b.UserID, b.Priority, b.CacheHitRate,
 		b.CreatedAt.Format(time.RFC3339), b.UpdatedAt.Format(time.RFC3339))

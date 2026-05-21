@@ -1,7 +1,6 @@
 """S3/MinIO client for direct context upload."""
 import logging
 import os
-import uuid
 
 import boto3
 from botocore.exceptions import ClientError
@@ -57,17 +56,5 @@ def upload_context(data: bytes, build_id: str) -> str:
         Key=key,
         Body=data,
         ContentType="application/x-tar",
-    )
-    return key
-
-
-def upload_bulk_context(data: bytes) -> str:
-    """Upload bulk build context to S3. Returns the object key."""
-    key = f"bulk/{uuid.uuid4()}.tar.gz"
-    _client.put_object(
-        Bucket=_bucket,
-        Key=key,
-        Body=data,
-        ContentType="application/x-gtar",
     )
     return key

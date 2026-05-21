@@ -79,13 +79,13 @@ export default function BuildList({ selected, onSelect }: Props) {
 
       {/* Column headers */}
       <div className="build-row" style={{ color: "var(--muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: ".5px", cursor: "default", padding: "4px 8px" }}>
-        <span style={{ width: 70, fontFamily: "monospace" }}>ID</span>
-        <span style={{ flex: 1 }}>Tag</span>
-        <span style={{ width: 80 }}>User</span>
-        <span style={{ width: 50, textAlign: "right" }}>Time</span>
-        <span style={{ width: 50, textAlign: "right" }}>Cache</span>
-        <span style={{ width: 100, textAlign: "center" }}>Status</span>
-        <span style={{ width: 140, textAlign: "right" }}>Actions</span>
+        <span className="col-id" style={{ fontFamily: "monospace" }}>ID</span>
+        <span className="col-tag">Tag</span>
+        <span className="col-user">User</span>
+        <span className="col-time">Time</span>
+        <span className="col-cache">Cache</span>
+        <span className="col-status">Status</span>
+        <span className="col-actions">Actions</span>
       </div>
 
       {!page && <p style={{ color: error ? "var(--red)" : "var(--muted)", fontSize: 12 }}>{error || "Loading..."}</p>}
@@ -94,13 +94,13 @@ export default function BuildList({ selected, onSelect }: Props) {
       {page?.builds.map(b => (
         <div key={b.id} className={`build-row ${selected === b.id ? "selected" : ""}`}
           onClick={() => onSelect(b.id)}>
-          <span className="build-id" title={b.id} style={{ width: 70 }}>{b.id.substring(0, 8)}</span>
-          <span className="build-tag" title={b.image_tag} style={{ flex: 1 }}>{b.image_tag || "—"}</span>
-          <span style={{ fontSize: 11, color: "var(--muted)", width: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.user_id}>{b.user_id || "anonymous"}</span>
-          <span style={{ fontSize: 11, color: "var(--muted)", width: 50, textAlign: "right" }}>{timeStr(b)}</span>
-          <span style={{ fontSize: 11, color: "var(--muted)", width: 50, textAlign: "right" }}>{cachePct(b)}</span>
-          <span className={`build-status ${statusC[b.status] || ""}`} style={{ width: 100, textAlign: "center", flexShrink: 0 }}>{b.status}</span>
-          <span style={{ width: 140, textAlign: "right", display: "flex", gap: 4, justifyContent: "flex-end" }} onClick={(e) => e.stopPropagation()}>
+          <span className="build-id col-id" title={b.id}>{b.id.substring(0, 8)}</span>
+          <span className="build-tag col-tag" title={b.image_tag}>{b.image_tag || "—"}</span>
+          <span className="col-user" style={{ fontSize: 11, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.user_id}>{b.user_id || "anonymous"}</span>
+          <span className="col-time" style={{ fontSize: 11, color: "var(--muted)" }}>{timeStr(b)}</span>
+          <span className="col-cache" style={{ fontSize: 11, color: "var(--muted)" }}>{cachePct(b)}</span>
+          <span className={`build-status col-status ${statusC[b.status] || ""}`}>{b.status}</span>
+          <span className="col-actions" onClick={(e) => e.stopPropagation()}>
             <button className="small ghost" onClick={() => setLogModal(b)}>Logs</button>
             {(b.status === "building" || b.status === "pending") && (
               <button className="small danger" onClick={() => cancelBuild(b.id).then(load)}>Cancel</button>
@@ -111,7 +111,7 @@ export default function BuildList({ selected, onSelect }: Props) {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 4, marginTop: 16 }}>
+        <div className="pagination">
           <span style={{ fontSize: 11, color: "var(--muted)", marginRight: 8 }}>
             {pp}/page &middot; {page?.total} total
           </span>

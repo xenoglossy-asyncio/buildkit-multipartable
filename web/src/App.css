@@ -526,9 +526,9 @@ button.small {
   border: 1px solid rgba(245, 158, 11, 0.3);
 }
 .status-building {
-  background: var(--primary-dim);
-  color: var(--primary);
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  background: var(--blue-dim);
+  color: var(--blue);
+  border: 1px solid rgba(59, 130, 246, 0.3);
 }
 .status-succeeded {
   background: var(--green-dim);
@@ -784,4 +784,99 @@ button.small {
 .admin-table .expand-row td {
   padding: 0 8px 16px;
   border-bottom: 1px solid var(--border);
+}
+
+/* === Build list columns (migrated from inline styles) === */
+.col-id { width: 70px; }
+.col-tag { flex: 1; }
+.col-user { width: 80px; }
+.col-time { width: 50px; text-align: right; }
+.col-cache { width: 50px; text-align: right; }
+.col-status { width: 100px; text-align: center; flex-shrink: 0; }
+.col-actions { width: 140px; text-align: right; display: flex; gap: 4px; justify-content: flex-end; }
+
+/* === Pagination === */
+.pagination {
+  display: flex; justify-content: center; align-items: center;
+  gap: 4px; margin-top: 16px;
+}
+
+/* === Log modal backdrop (migrated from inline styles) === */
+.log-modal-backdrop {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; padding: 32px;
+}
+
+/* === Admin grid (migrated from inline styles) === */
+.admin-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 12px; margin-bottom: 16px;
+}
+
+/* ============================================================
+   RESPONSIVE: Tablet (<=768px)
+   ============================================================ */
+@media (max-width: 768px) {
+  .app header { padding: 0 16px; }
+  .tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { padding: 8px 14px; white-space: nowrap; }
+  main { padding: 24px 16px; }
+  .card { padding: 20px; }
+  .metric-card { padding: 16px; }
+  .metric-value { font-size: 30px; }
+  .col-user, .col-cache { display: none; }
+  .col-actions { width: 100px; }
+  .admin-grid { grid-template-columns: 1fr; }
+  .log-modal-backdrop { padding: 16px; }
+  .dropzone { padding: 36px 16px; }
+  .bar-chart { height: 100px; }
+  .time-selector { flex-wrap: wrap; }
+  .date-range { margin-left: 0; }
+}
+
+/* ============================================================
+   RESPONSIVE: Phone (<=480px)
+   ============================================================ */
+@media (max-width: 480px) {
+  .app header {
+    flex-wrap: wrap; height: auto;
+    padding: 8px 12px; gap: 8px;
+  }
+  .app header > div:first-child {
+    width: 100%; gap: 12px;
+    flex-wrap: wrap;
+  }
+  .app header h1 { font-size: 16px; }
+  .tabs { width: 100%; order: 2; }
+  .tabs button {
+    padding: 8px 12px; font-size: 12px;
+    min-height: 44px;
+  }
+  .logout-btn { order: 1; margin-left: auto; }
+  main { padding: 16px 12px; }
+  .card { padding: 16px; border-radius: 12px; }
+  .metrics-grid {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+  .metric-card { padding: 14px; border-radius: 12px; }
+  .metric-value { font-size: 28px; }
+  .col-time { display: none; }
+  .col-id { width: 48px; }
+  .col-actions { width: 70px; }
+  .col-status { width: 80px; }
+  .pagination { flex-wrap: wrap; }
+  .log-modal-backdrop { padding: 8px; }
+  .logs { font-size: 11px; padding: 12px; }
+  .login-card { padding: 36px 24px; }
+  .dropzone { padding: 24px 12px; }
+  button.small { min-height: 44px; }
+  .build-row { padding: 10px 8px; gap: 8px; margin: 0 -8px; }
+  .admin-table th, .admin-table td { padding: 8px 4px; }
 }

@@ -2,8 +2,6 @@
 package service
 
 import (
-	"bytes"
-	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -71,79 +69,6 @@ func (s *BuildService) SubmitBuild(buildID, ctxKey string, dockerfileContent []b
 	s.queue.Push(b)
 
 	return b, nil
-}
-
-// SubmitBulkBuild creates multiple builds from discovered Dockerfiles.
-// Quota enforcement is handled by the FastAPI gateway before calling this.
-func (s *BuildService) SubmitBulkBuild(contextData []byte, tagPrefix string, userID string) ([]*domain.Build, error) {
-	subdirs, err := discoverBulkDockerfiles(bytes.NewReader(contextData))
-	if err != nil {
-		return nil, fmt.Errorf("discover dockerfiles: %w", err)
-	}
-	if len(subdirs) == 0 {
-		return nil, fmt.Errorf("no Dockerfiles found in archive")
-	}
-
-	// Pre-flight validation
-	bulkEntries := make([]validate.BulkEntry, len(subdirs))
-	for i, sd := range subdirs {
-		bulkEntries[i] = validate.BulkEntry{
-			Path:    sd.path,
-			Name:    sd.name,
-			Content: sd.content,
-		}
-	}
-	v := validate.Bulk(bulkEntries)
-	if !v.Valid() {
-		return nil, fmt.Errorf("validation failed: %s", strings.Join(v.Errors, "; "))
-	}
-
-	var builds []*domain.Build
-	for _, sd := range subdirs {
-		subTar, err := extractSubdir(bytes.NewReader(contextData), sd)
-		if err != nil {
-			slog.Warn("extract subdir failed", "dir", sd.path, "error", err)
-			continue
-		}
-
-		buildID := uuid.New().String()
-		ctxKey := fmt.Sprintf("contexts/%s.tar.gz", buildID)
-
-		if _, err := s.blobs.Put(context.Background(), ctxKey, subTar); err != nil {
-			slog.Warn("store subdir context failed", "dir", sd.path, "error", err)
-			continue
-		}
-
-		fp := fingerprint.FromDockerfile(sd.content)
-		tag := tagPrefix + sanitizeTag(sd.path)
-
-		b := &domain.Build{
-			ID:             buildID,
-			Status:         domain.StatusPending,
-			Fingerprint:    fp.Hash,
-			ContextKey:     ctxKey,
-			Dockerfile:     sd.name,
-			ImageTag:       tag,
-			Instructions:   fp.Instructions,
-			TimeoutSeconds: 600,
-			UserID:         userID,
-		}
-		builds = append(builds, b)
-	}
-
-	if len(builds) == 0 {
-		return nil, fmt.Errorf("failed to create any builds")
-	}
-
-	if err := s.repo.CreateBatch(builds); err != nil {
-		return nil, fmt.Errorf("batch create: %w", err)
-	}
-
-	for _, b := range builds {
-		s.queue.Push(b)
-	}
-
-	return builds, nil
 }
 
 // AssignBuild finds the best pending build for a worker.

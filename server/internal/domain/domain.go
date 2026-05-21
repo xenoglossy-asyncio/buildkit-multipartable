@@ -53,23 +53,3 @@ type Worker struct {
 	LastHeartbeat time.Time `json:"last_heartbeat"`
 	CacheKeys     []string  `json:"cache_keys,omitempty"`
 }
-
-// Quota defines resource limits for a user or API key.
-type Quota struct {
-	UserID           string `json:"user_id"`
-	MaxConcurrent    int    `json:"max_concurrent"`    // max builds in building state
-	MaxDaily         int    `json:"max_daily"`         // max builds submitted per day
-	MaxStorageBytes  int64  `json:"max_storage_bytes"` // max context storage
-	MaxTimeoutSec    int    `json:"max_timeout_sec"`   // max timeout per build
-}
-
-// EffectiveTimeout returns the timeout to use, capped by quota.
-func (q *Quota) EffectiveTimeout(requested int) int {
-	if q.MaxTimeoutSec <= 0 {
-		return requested
-	}
-	if requested <= 0 || requested > q.MaxTimeoutSec {
-		return q.MaxTimeoutSec
-	}
-	return requested
-}

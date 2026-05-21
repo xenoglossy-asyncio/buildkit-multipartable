@@ -215,13 +215,13 @@ func (w *Worker) tryExecuteBuild(ctx context.Context) error {
 
 	contextDir := filepath.Join(w.WorkDir, "builds", build.ID)
 	if err := os.MkdirAll(contextDir, 0755); err != nil {
-		w.completeBuild(build.ID, domain.StatusFailed, err.Error(), "")
+		w.completeBuild(build.ID, domain.StatusFailed, err.Error(), -1)
 		return nil
 	}
 	defer os.RemoveAll(contextDir)
 
 	if err := w.downloadContext(ctx, build.ID, contextDir); err != nil {
-		w.completeBuild(build.ID, domain.StatusFailed, err.Error(), "")
+		w.completeBuild(build.ID, domain.StatusFailed, err.Error(), -1)
 		return nil
 	}
 
@@ -234,31 +234,36 @@ func (w *Worker) tryExecuteBuild(ctx context.Context) error {
 		// Only write if the extracted context doesn't already have one
 		if _, statErr := os.Stat(dfPath); os.IsNotExist(statErr) {
 			if err := os.WriteFile(dfPath, []byte(build.Dockerfile), 0644); err != nil {
-				w.completeBuild(build.ID, domain.StatusFailed, err.Error(), "")
+				w.completeBuild(build.ID, domain.StatusFailed, err.Error(), -1)
 				return nil
 			}
 		}
 		dockerfile = "Dockerfile"
 	}
 
-	if err := w.executeBuild(ctx, &build, contextDir, dockerfile); err != nil {
-		w.completeBuild(build.ID, domain.StatusFailed, err.Error(), "")
+	result, err := w.executeBuild(ctx, &build, contextDir, dockerfile)
+	if err != nil {
+		w.completeBuild(build.ID, domain.StatusFailed, err.Error(), -1)
 	} else {
 		w.addCacheKeys(build.Instructions)
-		w.completeBuild(build.ID, domain.StatusSucceeded, "", "")
+		cacheRate := -1.0
+		if result != nil {
+			cacheRate = result.CacheHitRate
+		}
+		w.completeBuild(build.ID, domain.StatusSucceeded, "", cacheRate)
 	}
 	return nil
 }
 
-func (w *Worker) executeBuild(ctx context.Context, build *domain.Build, contextDir, dockerfile string) error {
+func (w *Worker) executeBuild(ctx context.Context, build *domain.Build, contextDir, dockerfile string) (*buildkit.BuildResult, error) {
 	// Check if build was cancelled before we start
 	if w.isBuildCancelled(build.ID) {
-		return fmt.Errorf("build cancelled")
+		return nil, fmt.Errorf("build cancelled")
 	}
 
 	bc, err := buildkit.NewClient(w.BuildkitAddr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Apply build timeout
@@ -302,21 +307,21 @@ func (w *Worker) executeBuild(ctx context.Context, build *domain.Build, contextD
 		BuildArgs:  build.Args,
 	}
 
-	_, err = bc.Build(buildCtx, opts, func(line string) {
+	result, err := bc.Build(buildCtx, opts, func(line string) {
 		w.sendLog(buildCtx, build.ID, line)
 	})
 
 	if err != nil {
 		if buildCtx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("build timed out after %v", timeout)
+			return nil, fmt.Errorf("build timed out after %v", timeout)
 		}
 		if w.isBuildCancelled(build.ID) {
-			return fmt.Errorf("build cancelled")
+			return nil, fmt.Errorf("build cancelled")
 		}
-		return err
+		return nil, err
 	}
 
-	return nil
+	return result, nil
 }
 
 func (w *Worker) isBuildCancelled(buildID string) bool {
@@ -395,13 +400,13 @@ func (w *Worker) sendLog(ctx context.Context, buildID, line string) {
 	slog.Error("sendLog failed after retries", "build", buildID, "line", line)
 }
 
-func (w *Worker) completeBuild(buildID string, status domain.Status, errMsg, digest string) {
+func (w *Worker) completeBuild(buildID string, status domain.Status, errMsg string, cacheRate float64) {
 	type completeReq struct {
-		Status      domain.Status `json:"status"`
-		Error       string       `json:"error,omitempty"`
-		ImageDigest string       `json:"image_digest,omitempty"`
+		Status       domain.Status `json:"status"`
+		Error        string        `json:"error,omitempty"`
+		CacheHitRate float64       `json:"cache_hit_rate"`
 	}
-	body, _ := json.Marshal(completeReq{Status: status, Error: errMsg, ImageDigest: digest})
+	body, _ := json.Marshal(completeReq{Status: status, Error: errMsg, CacheHitRate: cacheRate})
 
 	// Retry up to 3 times with backoff
 	for i := 0; i < 3; i++ {
