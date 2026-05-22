@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -211,6 +212,11 @@ func (s *Server) submitBuild(w http.ResponseWriter, r *http.Request) {
 
 		build, err := s.buildSvc.SubmitBuild(req.BuildID, req.ContextKey, []byte(req.Dockerfile), req.ImageTag, userID, timeout, req.Args)
 		if err != nil {
+			if errors.Is(err, service.ErrQueueFull) {
+				w.Header().Set("Retry-After", "5")
+				http.Error(w, "build queue full, retry later", http.StatusServiceUnavailable)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
@@ -257,6 +263,11 @@ func (s *Server) submitBuild(w http.ResponseWriter, r *http.Request) {
 
 	build, err := s.buildSvc.SubmitBuild(buildID, ctxKey, []byte(dockerfile), tag, userID, 600, nil)
 	if err != nil {
+		if errors.Is(err, service.ErrQueueFull) {
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "build queue full, retry later", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}

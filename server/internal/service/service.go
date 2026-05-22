@@ -2,6 +2,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -18,9 +19,23 @@ import (
 	"github.com/xenoglossy/dtbuildkit/internal/validate"
 )
 
+// ErrQueueFull is returned by SubmitBuild when the in-memory build queue is at
+// capacity. Callers (e.g. the HTTP layer) should translate this into a
+// retryable response such as 503 Service Unavailable + Retry-After.
+var ErrQueueFull = errors.New("build queue full")
+
+// buildPersister is the subset of BuildRepo used by BuildService. It exists so
+// tests can inject lightweight fakes without standing up a Postgres instance.
+type buildPersister interface {
+	Create(b *domain.Build) error
+	Get(id string) (*domain.Build, error)
+	ListPending() ([]*domain.Build, error)
+	UpdateStatus(id string, status domain.Status, workerID, logLine, errMsg string) error
+}
+
 // BuildService handles build lifecycle.
 type BuildService struct {
-	repo      *repo.BuildRepo
+	repo      buildPersister
 	blobs     oss.BlobStore
 	scheduler *scheduler.Scheduler
 	queue     *queue.Queue
@@ -62,11 +77,24 @@ func (s *BuildService) SubmitBuild(buildID, ctxKey string, dockerfileContent []b
 		Priority:       0,
 	}
 
+	// Fast-path backpressure: reject before doing any DB work if the in-memory
+	// queue is already at capacity. This is the path that translates into 503
+	// at the HTTP boundary.
+	if s.queue.Full() {
+		return nil, ErrQueueFull
+	}
+
 	if err := s.repo.Create(b); err != nil {
 		return nil, fmt.Errorf("create build: %w", err)
 	}
 
-	s.queue.Push(b)
+	// Race window: another submit may have filled the queue between Full() and
+	// Push(). Cancel the just-created row so DB and queue stay consistent and
+	// the worker assignment loop won't pick up an already-rejected build.
+	if !s.queue.Push(b) {
+		_ = s.repo.UpdateStatus(b.ID, domain.StatusCancelled, "", "", "queue full at submit time")
+		return nil, ErrQueueFull
+	}
 
 	return b, nil
 }
@@ -83,9 +111,16 @@ func (s *BuildService) AssignBuild(workerID string) (*domain.Build, error) {
 		if err != nil || len(builds) == 0 {
 			return nil, nil
 		}
-		// Repopulate queue
+		// Repopulate queue. If the queue fills mid-loop just stop pushing — the
+		// remaining rows stay in DB and will be picked up on subsequent calls.
+		pushed := 0
 		for _, b := range builds {
-			s.queue.Push(b)
+			if !s.queue.Push(b) {
+				slog.Warn("assign: queue full during DB repopulation; remaining builds deferred",
+					"pushed", pushed, "deferred", len(builds)-pushed)
+				break
+			}
+			pushed++
 		}
 		// Try again
 		build = s.queue.PeekByScore(func(b *domain.Build) float64 {

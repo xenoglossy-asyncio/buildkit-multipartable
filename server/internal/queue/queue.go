@@ -57,6 +57,13 @@ func (q *Queue) Len() int {
 	return q.heap.Len()
 }
 
+// Full reports whether the queue is at capacity. Always false when maxLen<=0.
+func (q *Queue) Full() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.maxLen > 0 && q.heap.Len() >= q.maxLen
+}
+
 // PeekByScore returns the build that best matches a cache score function.
 // The scoreFn takes a build and returns 0..1 cache affinity. The queue
 // combines priority with cache affinity to select the best build.
