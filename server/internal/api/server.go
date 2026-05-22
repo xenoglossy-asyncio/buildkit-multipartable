@@ -74,6 +74,15 @@ func NewServer(addr string, dbPath string, blobBasePath string) (*Server, error)
 
 	srv.setupRoutes()
 
+	// Eagerly warm the queue from DB so cache affinity / priority ordering /
+	// metrics are correct from startup instead of waiting for the first
+	// worker poll (~2s) to trigger lazy DB fallback in AssignBuild.
+	if n, err := buildSvc.WarmQueue(); err != nil {
+		slog.Warn("queue warm-up failed; lazy fallback will recover", "error", err)
+	} else if n > 0 {
+		slog.Info("queue warmed from DB at startup", "builds", n)
+	}
+
 	go srv.maintenanceLoop()
 
 	return srv, nil
