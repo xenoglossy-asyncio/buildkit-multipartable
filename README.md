@@ -252,6 +252,16 @@ Auth is enforced by htpasswd in every backend; provision real credentials
 ACK, the LoadBalancer spec is annotated to `slb.s1.small`; override per
 environment.
 
+**Storage redirect is disabled.** By default the registry returns
+`307 Temporary Redirect` to the S3 endpoint for blob downloads. Our S3
+backend — MinIO in dev, internal cloud OSS in prod — is not (and must
+not be) reachable from outside the build cluster, so a redirect would
+send `docker pull` to a host it can't resolve. We set
+`storage.redirect.disable: true` ([`deploy/registry-config.yml`](deploy/registry-config.yml))
+and `REGISTRY_STORAGE_REDIRECT_DISABLE=true` ([`deploy/k8s/registry.yaml`](deploy/k8s/registry.yaml))
+so blob bytes are proxied through the registry itself. Only port 5000
+of `registry` / `registry-gateway` ever needs to be public.
+
 ## CLI Usage
 
 ```

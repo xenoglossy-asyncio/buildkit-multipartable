@@ -155,6 +155,12 @@ spec:
               value: /
             - name: REGISTRY_STORAGE_DELETE_ENABLED
               value: "true"
+            # Proxy blob bytes through the registry instead of redirecting
+            # to the S3 endpoint. The S3 backend (cloud OSS / internal
+            # endpoint) is not externally reachable, so without this the
+            # registry would 307 docker clients to a host they can't resolve.
+            - name: REGISTRY_STORAGE_REDIRECT_DISABLE
+              value: "true"
             # --- Auth ---
             - name: REGISTRY_AUTH
               value: htpasswd
