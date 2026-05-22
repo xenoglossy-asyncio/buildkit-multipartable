@@ -625,6 +625,37 @@ button.small {
   background: var(--surface-hover);
 }
 .stat-row:last-child { border-bottom: none; }
+
+/* === Dashboard tables (Top Users, Running Builds) ===
+   Fixed grid so headers and values align column-by-column. Flex
+   `space-between` does not give that — a row with shorter values
+   distributes them differently than the header row. */
+.dash-row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  transition: background .2s;
+}
+.dash-row:last-child { border-bottom: none; }
+.dash-row--head {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  cursor: default;
+  padding: 4px 8px;
+}
+.dash-row--users {
+  grid-template-columns: minmax(0, 1fr) 80px 80px 80px;
+}
+.dash-row--running {
+  grid-template-columns: 90px minmax(0, 1fr) 110px 80px;
+}
+.dash-row:not(.dash-row--head):hover {
+  background: var(--surface-hover);
+}
 .qlabel {
   display: flex;
   flex-direction: column;

@@ -68,16 +68,24 @@ export default function Dashboard() {
           cls={stats.pending > 10 ? "yellow" : ""} sub={`Queue: ${stats.queue_depth}`} />
       </div>
 
-      {/* Running builds */}
+      {/* Running builds — capped at 10 to keep the page bounded */}
       {running.length > 0 && (
         <div className="card" style={{ marginTop: 16 }}>
-          <h2>Running Builds ({running.length})</h2>
-          {running.map(b => (
-            <div key={b.id} className="stat-row" style={{ padding: "6px 0" }}>
+          <h2>Running Builds {running.length > 10 ? `(showing 10 of ${running.length})` : `(${running.length})`}</h2>
+          <div className="dash-row dash-row--head dash-row--running">
+            <span>ID</span>
+            <span>Image</span>
+            <span style={{ textAlign: "right" }}>Status</span>
+            <span style={{ textAlign: "right" }}>Elapsed</span>
+          </div>
+          {running.slice(0, 10).map(b => (
+            <div key={b.id} className="dash-row dash-row--running">
               <span className="build-id">{b.id.substring(0, 8)}</span>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>{b.image_tag}</span>
-              <span className={`build-status ${b.status === "building" ? "status-building" : "status-pending"}`}>{b.status}</span>
-              <span style={{ fontSize: 11, color: "var(--muted)" }}>{b.elapsed}</span>
+              <span style={{ fontSize: 12, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.image_tag}</span>
+              <span style={{ textAlign: "right" }}>
+                <span className={`build-status ${b.status === "building" ? "status-building" : "status-pending"}`}>{b.status}</span>
+              </span>
+              <span style={{ textAlign: "right", fontSize: 11, color: "var(--muted)" }}>{b.elapsed}</span>
             </div>
           ))}
         </div>
@@ -87,11 +95,14 @@ export default function Dashboard() {
       {users.length > 0 && (
         <div className="card" style={{ marginTop: 16 }}>
           <h2>Top Users (30D)</h2>
-          <div className="build-row" style={{ color: "var(--muted)", fontSize: 10, textTransform: "uppercase", cursor: "default", padding: "4px 8px" }}>
-            <span>User</span><span style={{ textAlign: "right" }}>Builds</span><span style={{ textAlign: "right" }}>Rate</span><span style={{ textAlign: "right" }}>Time</span>
+          <div className="dash-row dash-row--head dash-row--users">
+            <span>User</span>
+            <span style={{ textAlign: "right" }}>Builds</span>
+            <span style={{ textAlign: "right" }}>Rate</span>
+            <span style={{ textAlign: "right" }}>Time</span>
           </div>
           {users.slice(0, 10).map(u => (
-            <div key={u.user_id} className="stat-row" style={{ padding: "6px 0", fontSize: 12 }}>
+            <div key={u.user_id} className="dash-row dash-row--users">
               <span style={{ fontFamily: "monospace" }}>{u.user_id}</span>
               <span style={{ textAlign: "right" }}>{u.count}</span>
               <span style={{ textAlign: "right", color: u.success_rate >= 90 ? "var(--green)" : "var(--muted)" }}>{u.success_rate.toFixed(0)}%</span>
