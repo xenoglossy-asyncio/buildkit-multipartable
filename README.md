@@ -45,7 +45,7 @@ of container images per day — one (or more) per evaluation datapoint.
 | **API** | 8100 | FastAPI (Python 3.13) | Auth, user/quota/key management, stats (direct DB), S3 upload, build submission |
 | **Server** | 8640 | Go + chi | Build engine: CRUD, scheduling, worker management, log streaming |
 | **Worker** | — | Go + buildkitd | Executes `buildctl build`, downloads context from S3 |
-| **Registry** | 5000 | distribution/registry:2 | OCI image storage, S3-backed |
+| **Registry** | 5000 | distribution/registry:2 | OCI image storage, S3-backed. **Externally exposed** so users can `docker pull` built images |
 | **MinIO** | 9000 | minio/minio | S3-compatible object storage for contexts + registry backend |
 | **PostgreSQL** | 5432 | postgres:16 | Persistent storage (builds, workers, quotas, api_keys) |
 | **Redis** | 6379 | redis:7 | Stats cache (30s TTL, refreshed by FastAPI) |
@@ -156,7 +156,13 @@ cd server && go build -o dtbuild ./cmd/dtbuild
 open http://localhost:3000/docs
 # Or direct: http://localhost:8100/docs
 
-# 8. Prometheus metrics
+# 8. Pull a built image (registry is exposed on host port 5000)
+#    image_tag stored as `registry:80/foo:bar` is the in-network address;
+#    from outside the docker network use `localhost:5000` instead.
+docker login localhost:5000           # creds: see deploy/htpasswd
+docker pull  localhost:5000/test:v1
+
+# 9. Prometheus metrics
 curl http://localhost:8640/metrics
 ```
 
@@ -214,6 +220,37 @@ curl http://localhost:8640/metrics
 | `GET` | `/api/v1/builds/{id}` | Build details (direct DB) |
 | `GET` | `/api/v1/builds/{id}/logs` | Build logs (?stream=true for SSE proxy to Go) |
 | `DELETE` | `/api/v1/builds/{id}` | Cancel build (proxied to Go) |
+
+## Pulling Built Images
+
+Built images are stored in the bundled S3-backed registry. The `image_tag`
+written to the DB (e.g. `registry:80/foo:bar` in dev, `registry-gateway:5000/foo:bar`
+in K8s) is the **in-network** address used by buildkitd / workers. From outside
+that network, swap the host but keep the image path.
+
+**Dev (docker compose, host port 5000 → container port 80):**
+
+```bash
+docker login localhost:5000              # creds: deploy/htpasswd
+docker pull  localhost:5000/foo:bar      # was: registry:80/foo:bar
+```
+
+**Production (Kubernetes):**
+
+`registry-gateway` Service is `type: LoadBalancer` (see [`deploy/k8s/registry.yaml`](deploy/k8s/registry.yaml)),
+so the cloud provider provisions an external IP / SLB. In-cluster traffic still
+uses the same Service via ClusterIP DNS — `LoadBalancer` is a superset of `ClusterIP`.
+
+```bash
+kubectl get svc registry-gateway        # → EXTERNAL-IP column
+docker login  $REGISTRY_HOST:5000
+docker pull   $REGISTRY_HOST:5000/foo:bar
+```
+
+Auth is enforced by htpasswd in every backend; provision real credentials
+(`htpasswd -nbB user pass >> deploy/htpasswd`) before exposing publicly. For
+ACK, the LoadBalancer spec is annotated to `slb.s1.small`; override per
+environment.
 
 ## CLI Usage
 

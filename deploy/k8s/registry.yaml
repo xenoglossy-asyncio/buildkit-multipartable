@@ -215,12 +215,22 @@ spec:
             name: registry-gateway-config
             defaultMode: 0755
 ---
+# Externally exposed so users can `docker pull` built images.
+# Workers in-cluster also use this Service via ClusterIP DNS
+# (registry-gateway:5000) — LoadBalancer is a superset of ClusterIP.
+# Auth is enforced by htpasswd in the registry backends.
 apiVersion: v1
 kind: Service
 metadata:
   name: registry-gateway
+  annotations:
+    # ACK SLB hints (override per environment as needed)
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-spec: slb.s1.small
 spec:
+  type: LoadBalancer
   selector:
     app: registry-gateway
   ports:
-    - port: 5000
+    - name: http
+      port: 5000
+      targetPort: 5000
