@@ -177,6 +177,7 @@ func (s *Server) submitBuild(w http.ResponseWriter, r *http.Request) {
 			ContextKey     string            `json:"context_key"`
 			Dockerfile     string            `json:"dockerfile"`
 			ImageTag       string            `json:"image_tag"`
+			UserID         string            `json:"user_id"`
 			TimeoutSeconds int               `json:"timeout_seconds"`
 			Args           map[string]string `json:"args"`
 		}
@@ -201,7 +202,12 @@ func (s *Server) submitBuild(w http.ResponseWriter, r *http.Request) {
 		if timeout > 3600 {
 			timeout = 3600
 		}
-		userID := r.Header.Get("X-Api-Key")
+		// Prefer user_id from JSON body (set by FastAPI after key resolution);
+		// fall back to header for CLI / legacy direct callers.
+		userID := req.UserID
+		if userID == "" {
+			userID = r.Header.Get("X-Api-Key")
+		}
 
 		build, err := s.buildSvc.SubmitBuild(req.BuildID, req.ContextKey, []byte(req.Dockerfile), req.ImageTag, userID, timeout, req.Args)
 		if err != nil {
@@ -232,7 +238,11 @@ func (s *Server) submitBuild(w http.ResponseWriter, r *http.Request) {
 		dockerfile = "Dockerfile"
 	}
 	tag := r.FormValue("image_tag")
-	userID := r.Header.Get("X-Api-Key")
+	// Prefer explicit user_id form field; fall back to header for legacy CLI.
+	userID := r.FormValue("user_id")
+	if userID == "" {
+		userID = r.Header.Get("X-Api-Key")
+	}
 
 	// Generate build ID first so context key matches
 	buildID := r.FormValue("build_id")

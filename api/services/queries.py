@@ -283,6 +283,102 @@ async def check_daily(pool: asyncpg.Pool, user_id: str) -> int:
         ) or 0
 
 
+# ─── Build reservations (TOCTOU-safe concurrent quota) ───────────────────────
+
+async def try_reserve_builds(pool: asyncpg.Pool, user_id: str, build_ids: list[str]) -> tuple[bool, str]:
+    """Atomically reserve N concurrent + daily slots for user_id.
+
+    Uses pg_advisory_xact_lock keyed on user_id so check-and-insert is serialized
+    per user. Returns (True, "") on success, or (False, "concurrent"|"daily") if
+    the request would exceed a quota.
+    """
+    n = len(build_ids)
+    if n == 0:
+        return True, ""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Serialize all reservation activity for this user.
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))",
+                f"quota:{user_id}",
+            )
+            quota = await conn.fetchrow(
+                "SELECT max_concurrent, max_daily FROM quotas WHERE user_id = $1",
+                user_id,
+            )
+            if quota:
+                if quota["max_concurrent"] > 0:
+                    current = await conn.fetchval(
+                        "SELECT COUNT(*) FROM build_reservations WHERE user_id = $1",
+                        user_id,
+                    ) or 0
+                    if current + n > quota["max_concurrent"]:
+                        return False, "concurrent"
+                if quota["max_daily"] > 0:
+                    # Today's count = builds rows created today (terminal or not)
+                    # + reservations created today that don't yet have a builds row.
+                    today = await conn.fetchval(
+                        """
+                        SELECT
+                            (SELECT COUNT(*) FROM builds
+                                WHERE user_id = $1
+                                  AND created_at::timestamptz >= CURRENT_DATE)
+                          + (SELECT COUNT(*) FROM build_reservations r
+                                WHERE r.user_id = $1
+                                  AND r.created_at >= CURRENT_DATE
+                                  AND NOT EXISTS (SELECT 1 FROM builds b WHERE b.id = r.build_id))
+                        """,
+                        user_id,
+                    ) or 0
+                    if today + n > quota["max_daily"]:
+                        return False, "daily"
+            await conn.executemany(
+                "INSERT INTO build_reservations (build_id, user_id) VALUES ($1, $2)",
+                [(bid, user_id) for bid in build_ids],
+            )
+    return True, ""
+
+
+async def release_reservation(pool: asyncpg.Pool, build_id: str) -> None:
+    """Delete a single reservation. Safe to call on missing rows (no-op)."""
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM build_reservations WHERE build_id = $1", build_id)
+
+
+async def release_reservations(pool: asyncpg.Pool, build_ids: list[str]) -> None:
+    """Delete multiple reservations in one round-trip."""
+    if not build_ids:
+        return
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM build_reservations WHERE build_id = ANY($1::text[])",
+            build_ids,
+        )
+
+
+async def gc_reservations(pool: asyncpg.Pool) -> int:
+    """Periodic GC: drop reservations whose build is terminal, or orphans > 10 min."""
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            DELETE FROM build_reservations r
+            WHERE EXISTS (
+                SELECT 1 FROM builds b
+                WHERE b.id = r.build_id
+                  AND b.status NOT IN ('pending', 'building')
+            )
+            OR (
+                r.created_at < NOW() - INTERVAL '10 minutes'
+                AND NOT EXISTS (SELECT 1 FROM builds b WHERE b.id = r.build_id)
+            )
+            """
+        )
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
 # ─── API Keys ─────────────────────────────────────────────────────────────────
 
 def _hash_key(raw_key: str) -> str:

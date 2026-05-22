@@ -11,12 +11,13 @@ def build_client(request: Request):
     return request.app.state.build_client
 
 
-async def submit_build(request: Request, build_id: str, context_key: str, dockerfile: str, image_tag: str, args: dict | None = None) -> dict:
+async def submit_build(request: Request, build_id: str, context_key: str, dockerfile: str, image_tag: str, user_id: str = "", args: dict | None = None) -> dict:
     payload = {
         "build_id": build_id,
         "context_key": context_key,
         "dockerfile": dockerfile,
         "image_tag": image_tag,
+        "user_id": user_id,
     }
     if args:
         payload["args"] = args
