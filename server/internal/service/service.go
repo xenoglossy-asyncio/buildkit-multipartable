@@ -75,6 +75,11 @@ func (s *BuildService) SubmitBuild(buildID, ctxKey string, dockerfileContent []b
 		TimeoutSeconds: timeoutSec,
 		UserID:         userID,
 		Priority:       0,
+		// -1 sentinel = "cache hit rate not yet computed". Worker overwrites
+		// with a real percentage on success; failed/uncomputed builds keep -1
+		// so detail/list views can render "N/A" and stats can exclude them
+		// without conflating with a legitimate 0% cache-hit rate.
+		CacheHitRate: -1,
 	}
 
 	// Fast-path backpressure: reject before doing any DB work if the in-memory

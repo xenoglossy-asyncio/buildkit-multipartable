@@ -140,7 +140,7 @@ async def average_stats(pool: asyncpg.Pool) -> dict:
                     FILTER (WHERE status = 'succeeded' AND completed_at IS NOT NULL
                             AND EXTRACT(EPOCH FROM (completed_at::timestamptz - created_at::timestamptz)) BETWEEN 0 AND 7200)
                     AS avg_build_sec,
-                AVG(cache_hit_rate) FILTER (WHERE status = 'succeeded' AND cache_hit_rate > 0) AS cache_hit_rate
+                AVG(cache_hit_rate) FILTER (WHERE status = 'succeeded' AND cache_hit_rate >= 0) AS cache_hit_rate
             FROM builds
         """)
     return {

@@ -19,8 +19,9 @@ function timeStr(b: Build): string {
 }
 function cachePct(b: Build): string {
   // Use stored cache_hit_rate from backend (computed at build completion)
-  // Backend stores as percentage (0-100), display directly
-  if (b.cache_hit_rate !== undefined && b.cache_hit_rate !== null) {
+  // Backend stores as percentage (0-100); -1 sentinel = not computed (failed
+  // build, no user steps, etc.). Render those as "—" instead of "0%".
+  if (b.cache_hit_rate !== undefined && b.cache_hit_rate !== null && b.cache_hit_rate >= 0) {
     return `${Math.round(b.cache_hit_rate)}%`;
   }
   return "—";
