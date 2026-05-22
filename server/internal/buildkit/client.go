@@ -92,7 +92,8 @@ type vertexInfo struct {
 }
 
 // isUserStep returns true if the vertex name looks like a cacheable user build
-// step [M/T] (e.g. RUN, COPY, WORKDIR). FROM steps are excluded because their
+// step. Single-stage builds use [M/T]; multi-stage builds prefix the stage name
+// (e.g. [builder 2/5], [stage-1 4/6]). FROM steps are excluded because their
 // "cached" status reflects base image layer availability in buildkitd, not
 // build cache affinity.
 func isUserStep(name string) bool {
@@ -102,13 +103,19 @@ func isUserStep(name string) bool {
 		return false
 	}
 	content := name[bracketStart+1 : bracketEnd]
-	parts := strings.Split(content, "/")
+	// The "M/N" token is always the last whitespace-separated token in the
+	// bracket. Anything before it (e.g. "builder", "stage-1") is the stage
+	// name and may contain letters / digits / hyphens.
+	fields := strings.Fields(content)
+	if len(fields) == 0 {
+		return false
+	}
+	mn := fields[len(fields)-1]
+	parts := strings.Split(mn, "/")
 	if len(parts) != 2 {
 		return false
 	}
-	// Check that both parts look like numbers
 	for _, p := range parts {
-		p = strings.TrimSpace(p)
 		if p == "" {
 			return false
 		}
