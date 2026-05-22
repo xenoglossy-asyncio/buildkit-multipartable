@@ -285,16 +285,17 @@ async def check_daily(pool: asyncpg.Pool, user_id: str) -> int:
 
 # ─── Build reservations (TOCTOU-safe concurrent quota) ───────────────────────
 
-async def try_reserve_builds(pool: asyncpg.Pool, user_id: str, build_ids: list[str]) -> tuple[bool, str]:
+async def try_reserve_builds(pool: asyncpg.Pool, user_id: str, build_ids: list[str]) -> tuple[bool, str, dict | None]:
     """Atomically reserve N concurrent + daily slots for user_id.
 
     Uses pg_advisory_xact_lock keyed on user_id so check-and-insert is serialized
-    per user. Returns (True, "") on success, or (False, "concurrent"|"daily") if
-    the request would exceed a quota.
+    per user. Returns (True, "", quota) on success, or (False, "concurrent"|"daily", quota)
+    if a quota would be exceeded. quota is the row dict (or None if user has no quota
+    configured) so the caller can read fields like max_timeout_sec without a second query.
     """
     n = len(build_ids)
     if n == 0:
-        return True, ""
+        return True, "", None
     async with pool.acquire() as conn:
         async with conn.transaction():
             # Serialize all reservation activity for this user.
@@ -302,10 +303,11 @@ async def try_reserve_builds(pool: asyncpg.Pool, user_id: str, build_ids: list[s
                 "SELECT pg_advisory_xact_lock(hashtext($1))",
                 f"quota:{user_id}",
             )
-            quota = await conn.fetchrow(
-                "SELECT max_concurrent, max_daily FROM quotas WHERE user_id = $1",
+            row = await conn.fetchrow(
+                "SELECT max_concurrent, max_daily, max_timeout_sec FROM quotas WHERE user_id = $1",
                 user_id,
             )
+            quota = dict(row) if row else None
             if quota:
                 if quota["max_concurrent"] > 0:
                     current = await conn.fetchval(
@@ -313,7 +315,7 @@ async def try_reserve_builds(pool: asyncpg.Pool, user_id: str, build_ids: list[s
                         user_id,
                     ) or 0
                     if current + n > quota["max_concurrent"]:
-                        return False, "concurrent"
+                        return False, "concurrent", quota
                 if quota["max_daily"] > 0:
                     # Today's count = builds rows created today (terminal or not)
                     # + reservations created today that don't yet have a builds row.
@@ -331,12 +333,12 @@ async def try_reserve_builds(pool: asyncpg.Pool, user_id: str, build_ids: list[s
                         user_id,
                     ) or 0
                     if today + n > quota["max_daily"]:
-                        return False, "daily"
+                        return False, "daily", quota
             await conn.executemany(
                 "INSERT INTO build_reservations (build_id, user_id) VALUES ($1, $2)",
                 [(bid, user_id) for bid in build_ids],
             )
-    return True, ""
+    return True, "", quota
 
 
 async def release_reservation(pool: asyncpg.Pool, build_id: str) -> None:

@@ -66,14 +66,17 @@ async def submit_build(
     pool = get_pool()
     build_id = str(uuid.uuid4())
 
-    ok, reason = await queries.try_reserve_builds(pool, user_id, [build_id])
+    ok, reason, quota = await queries.try_reserve_builds(pool, user_id, [build_id])
     if not ok:
         raise HTTPException(status_code=429, detail=f"{reason} build limit reached")
+
+    timeout_seconds = int(quota.get("max_timeout_sec") or 0) if quota else 0
 
     try:
         context_key = await asyncio.to_thread(s3.upload_context, data, build_id)
         result = await buildkit.submit_build(
-            request, build_id, context_key, dockerfile, image_tag, user_id=user_id
+            request, build_id, context_key, dockerfile, image_tag,
+            user_id=user_id, timeout_seconds=timeout_seconds,
         )
         return result
     except HTTPException:
@@ -178,16 +181,19 @@ async def submit_bulk(
     plan = [(str(uuid.uuid4()), entry) for entry in entries]
     build_ids = [bid for bid, _ in plan]
 
-    ok, reason = await queries.try_reserve_builds(pool, user_id, build_ids)
+    ok, reason, quota = await queries.try_reserve_builds(pool, user_id, build_ids)
     if not ok:
         raise HTTPException(status_code=429, detail=f"{reason} build limit reached")
+
+    timeout_seconds = int(quota.get("max_timeout_sec") or 0) if quota else 0
 
     async def _submit_one(build_id: str, entry: dict) -> dict:
         sub_tar = await asyncio.to_thread(_extract_subdir, data, entry["path"])
         context_key = await asyncio.to_thread(s3.upload_context, sub_tar, build_id)
         image_tag = tag_prefix + _sanitize_tag(entry["path"])
         return await buildkit.submit_build(
-            request, build_id, context_key, entry["name"], image_tag, user_id=user_id
+            request, build_id, context_key, entry["name"], image_tag,
+            user_id=user_id, timeout_seconds=timeout_seconds,
         )
 
     results = await asyncio.gather(
